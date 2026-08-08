@@ -1,6 +1,6 @@
 #!/bin/bash
 # token 余额看板启动脚本
-# 双击此文件即可启动,浏览器打开 http://localhost:5060
+# 双击此文件即可启动,浏览器打开 http://localhost:5070
 cd "$(dirname "$0")"
 
 if [ ! -d ".venv" ]; then
@@ -22,16 +22,16 @@ else
   source .venv/bin/activate
 fi
 
-# 启动前清掉占用 5060 的残留进程(避免重复双击 / 上次没关干净导致端口冲突)
-OLDPID=$(lsof -nP -iTCP:5060 -sTCP:LISTEN -t 2>/dev/null)
+# 启动前清掉占用 5070 的残留进程(避免重复双击 / 上次没关干净导致端口冲突)
+OLDPID=$(lsof -nP -iTCP:5070 -sTCP:LISTEN -t 2>/dev/null)
 if [ -n "$OLDPID" ]; then
-  echo "检测到端口 5060 被占用(PID $OLDPID),正在关闭旧进程..."
+  echo "检测到端口 5070 被占用(PID $OLDPID),正在关闭旧进程..."
   kill "$OLDPID" 2>/dev/null
   sleep 1
 fi
 
 # 自动在浏览器打开(后台执行,2秒后)
-( sleep 2 && open "http://localhost:5060" ) &
+( sleep 2 && open "http://localhost:5070" ) &
 
 python3 app.py
 read -n 1 -s -r -p "按任意键关闭窗口..."

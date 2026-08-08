@@ -10,7 +10,7 @@ DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
 CONFIG_FILE = DATA_DIR / "config.json"
-PORT = 5060
+PORT = 5070  # 不能用 5060:Chrome/Edge 把它列为受限端口(SIP),浏览器 ERR_UNSAFE_PORT
 
 _DEFAULT_THEME = "auto"
 VALID_THEMES = ("light", "dark", "auto")
