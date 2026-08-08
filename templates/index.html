@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Token 余额看板</title>
+<script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<style>
+  :root {
+    --bg:#0f1117; --card:#1a1d27; --text:#e4e6eb; --muted:#8b8fa3;
+    --accent:#4f8cff; --green:#34d399; --red:#f87171; --amber:#fbbf24;
+    --border:#2a2e3a;
+  }
+  [data-theme="light"] {
+    --bg:#f5f6fa; --card:#fff; --text:#1a1d27; --muted:#6b7280;
+    --accent:#2563eb; --green:#10b981; --red:#ef4444; --amber:#f59e0b;
+    --border:#e5e7eb;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;min-height:100vh;padding:24px}
+  .header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
+  h1{font-size:20px;font-weight:600}
+  .toolbar{display:flex;gap:8px}
+  .btn{background:var(--card);color:var(--text);border:1px solid var(--border);padding:8px 14px;border-radius:8px;cursor:pointer;font-size:13px}
+  .btn:hover{border-color:var(--accent)}
+  .btn:disabled{opacity:.6;cursor:default}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px}
+  .card-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+  .card-name{font-size:15px;font-weight:600}
+  .tier{font-size:12px;color:var(--muted)}
+  .balance{font-size:32px;font-weight:700;margin:8px 0}
+  .balance-sub{font-size:12px;color:var(--muted);margin-bottom:12px}
+  .window{margin-bottom:14px}
+  .window:last-child{margin-bottom:0}
+  .window-label{display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px}
+  .bar{height:8px;background:var(--border);border-radius:4px;overflow:hidden}
+  .bar-fill{height:100%;border-radius:4px;transition:width .4s}
+  .bar-fill.ok{background:var(--green)}
+  .bar-fill.warn{background:var(--amber)}
+  .bar-fill.empty{background:var(--red)}
+  .reset{font-size:11px;color:var(--muted);margin-top:3px}
+  .status{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin-top:8px}
+  .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+  .dot.ok{background:var(--green)} .dot.err{background:var(--red)} .dot.warn{background:var(--amber)}
+  .placeholder{color:var(--muted);font-size:13px;text-align:center;padding:24px 0;line-height:1.8}
+  .drawer{position:fixed;top:0;right:-380px;width:360px;height:100vh;background:var(--card);border-left:1px solid var(--border);padding:24px;transition:right .3s;overflow-y:auto;z-index:10}
+  .drawer.open{right:0}
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:9;display:none}
+  .overlay.show{display:block}
+  .field{margin-bottom:16px}
+  .field label{display:block;font-size:13px;margin-bottom:4px}
+  .field input{width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);padding:8px 10px;border-radius:6px;font-size:13px}
+  .seg{display:flex;gap:0;border:1px solid var(--border);border-radius:6px;overflow:hidden}
+  .seg button{flex:1;background:var(--bg);color:var(--text);border:none;padding:8px;cursor:pointer;font-size:12px}
+  .seg button.active{background:var(--accent);color:#fff}
+  .hint{font-size:12px;color:var(--muted);margin-top:16px;line-height:1.6}
+  .error-text{font-size:11px;color:var(--red);margin-top:4px;word-break:break-all}
+</style>
+</head>
+<body data-theme="dark" x-data="board()" x-init="init()" :data-theme="theme">
+
+<div class="header">
+  <h1>Token 余额看板</h1>
+  <div class="toolbar">
+    <button class="btn" @click="refresh()" :disabled="loading"><span x-text="loading ? '刷新中…' : '刷新'"></span></button>
+    <button class="btn" @click="settingsOpen=true">设置</button>
+  </div>
+</div>
+
+<div class="grid">
+  <template x-for="p in providers" :key="p.key">
+    <div class="card">
+      <div class="card-head">
+        <span class="card-name" x-text="p.name"></span>
+        <span class="tier" x-show="p.data && p.data.level" x-text="'套餐 · ' + (p.data.level||'')"></span>
+      </div>
+
+      <!-- 余额型:DeepSeek -->
+      <template x-if="p.key==='deepseek' && p.status==='ok'">
+        <div>
+          <div class="balance" x-text="'¥ ' + p.data.total_balance"></div>
+          <div class="balance-sub">
+            充值 ¥<span x-text="p.data.topped_up_balance"></span> · 赠金 ¥<span x-text="p.data.granted_balance"></span>
+          </div>
+          <div class="status">
+            <span class="dot" :class="p.data.is_available ? 'ok' : 'err'"></span>
+            <span x-text="(p.data.is_available ? '可调用' : '余额不足') + ' · ' + ago(p.updated_at)"></span>
+          </div>
+        </div>
+      </template>
+
+      <!-- 窗口型:智谱 -->
+      <template x-if="p.key==='zhipu' && p.status==='ok'">
+        <div>
+          <template x-for="(w,i) in (p.data.windows||[])" :key="i">
+            <div class="window">
+              <div class="window-label">
+                <span x-text="w.label + '窗口'"></span>
+                <span x-text="w.used + ' / ' + w.total + ' 积分'"></span>
+              </div>
+              <div class="bar">
+                <div class="bar-fill" :class="barClass(w)" :style="'width:' + pct(w) + '%'"></div>
+              </div>
+              <div class="reset" x-text="pct(w) + '% · ' + countdown(w.reset_at) + '后重置'"></div>
+            </div>
+          </template>
+          <div class="status">
+            <span class="dot ok"></span><span x-text="'已更新 · ' + ago(p.updated_at)"></span>
+          </div>
+        </div>
+      </template>
+
+      <!-- 错误 -->
+      <template x-if="p.status==='error'">
+        <div>
+          <div class="placeholder">查询失败</div>
+          <div class="error-text" x-text="p.error || ''"></div>
+          <div class="status">
+            <span class="dot err"></span><span x-text="ago(p.updated_at)"></span>
+          </div>
+        </div>
+      </template>
+
+      <!-- 未配置/占位 -->
+      <template x-if="p.status==='unconfigured'">
+        <div>
+          <div class="placeholder">
+            <span x-text="(p.data && p.data.note) ? p.data.note : '未配置 API Key'"></span><br>
+            <span style="font-size:11px">点右上「设置」填入</span>
+          </div>
+        </div>
+      </template>
+    </div>
+  </template>
+</div>
+
+<!-- 设置抽屉 -->
+<div class="overlay" :class="settingsOpen?'show':''" @click="settingsOpen=false"></div>
+<div class="drawer" :class="settingsOpen?'open':''">
+  <h2 style="margin-bottom:20px;font-size:16px">设置</h2>
+  <div class="field">
+    <label>主题</label>
+    <div class="seg">
+      <template x-for="t in ['auto','light','dark']" :key="t">
+        <button :class="theme===t?'active':''" @click="setTheme(t)" x-text="{auto:'跟随系统',light:'浅色',dark:'深色'}[t]"></button>
+      </template>
+    </div>
+  </div>
+  <div class="field">
+    <label>DeepSeek API Key</label>
+    <input type="password" placeholder="sk-..." x-model="keyInputs.deepseek">
+    <button class="btn" style="margin-top:6px;width:100%" @click="saveKey('deepseek')">保存</button>
+  </div>
+  <div class="field">
+    <label>智谱 API Key</label>
+    <input type="password" placeholder="xxx.yyy" x-model="keyInputs.zhipu">
+    <button class="btn" style="margin-top:6px;width:100%" @click="saveKey('zhipu')">保存</button>
+  </div>
+  <p class="hint">
+    千问 / MiniMax 走 Edge 登录态,无需填 Key。<br>
+    在 Edge 浏览器登录对应平台即可(抓包接入后生效)。
+  </p>
+</div>
+
+<script>
+function board(){
+  return {
+    providers:[], loading:false, settingsOpen:false, theme:'dark', tick:0,
+    keyInputs:{deepseek:'',zhipu:''},
+    async init(){
+      await this.loadConfig();
+      await this.refresh();
+      setInterval(()=>this.refresh(),60000);  // 60秒轮询
+      setInterval(()=>{this.tick++},1000);     // 倒计时每秒tick(触发响应式重算)
+    },
+    async loadConfig(){
+      const r=await fetch('/api/config');const d=await r.json();this.theme=d.theme;
+    },
+    async refresh(){
+      this.loading=true;
+      try{const r=await fetch('/api/refresh',{method:'POST'});const d=await r.json();this.providers=d.providers;}
+      finally{this.loading=false;}
+    },
+    pct(w){this.tick;return w.total?Math.round((w.used/w.total)*100):0},
+    barClass(w){this.tick;const p=this.pct(w);return p>=90?'empty':p>=70?'warn':'ok'},
+    countdown(iso){this.tick;if(!iso)return'未知';const ms=new Date(iso)-new Date();if(ms<=0)return'已重置';
+      const h=Math.floor(ms/36e5),m=Math.floor(ms%36e5/6e4);
+      return h>0?h+'小时'+m+'分':m+'分'},
+    ago(iso){this.tick;if(!iso)return'';const s=Math.floor((Date.now()-new Date(iso))/1000);
+      return s<60?'刚刚':Math.floor(s/60)+'分钟前'},
+    async saveKey(p){
+      const r=await fetch('/api/config/api-key',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({provider:p,key:this.keyInputs[p]})});
+      const d=await r.json();if(d.ok){this.keyInputs[p]='';await this.refresh();}
+    },
+    async setTheme(t){this.theme=t;await fetch('/api/config/theme',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({theme:t})});},
+  }
+}
+</script>
+</body>
+</html>
