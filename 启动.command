@@ -22,6 +22,14 @@ else
   source .venv/bin/activate
 fi
 
+# 启动前清掉占用 5060 的残留进程(避免重复双击 / 上次没关干净导致端口冲突)
+OLDPID=$(lsof -nP -iTCP:5060 -sTCP:LISTEN -t 2>/dev/null)
+if [ -n "$OLDPID" ]; then
+  echo "检测到端口 5060 被占用(PID $OLDPID),正在关闭旧进程..."
+  kill "$OLDPID" 2>/dev/null
+  sleep 1
+fi
+
 # 自动在浏览器打开(后台执行,2秒后)
 ( sleep 2 && open "http://localhost:5060" ) &
 
