@@ -1,4 +1,4 @@
-from providers.base import Provider, STATUS_OK
+from providers.base import Provider, STATUS_OK, ERROR_KINDS
 
 
 def test_provider_base_fetch_contract():
@@ -33,7 +33,7 @@ def test_provider_unconfigured_when_no_key():
     assert r["key"] == "dummy"
 
 
-def test_provider_error():
+def test_provider_error_default_kind():
     class Dummy(Provider):
         key = "dummy"
         name = "测试"
@@ -41,4 +41,18 @@ def test_provider_error():
     d = Dummy()
     r = d.error("boom")
     assert r["status"] == "error"
-    assert r["error"] == "boom"
+    assert r["error"] == ERROR_KINDS["unknown"]  # 人话,非原始 boom
+    assert r["error_kind"] == "unknown"
+    assert r["error_detail"] == "boom"  # 原始保留
+
+
+def test_provider_error_classified_kind():
+    class Dummy(Provider):
+        key = "dummy"
+        name = "测试"
+
+    d = Dummy()
+    r = d.error("401 Client Error", kind="auth")
+    assert r["error"] == ERROR_KINDS["auth"]
+    assert r["error_kind"] == "auth"
+    assert r["error_detail"] == "401 Client Error"

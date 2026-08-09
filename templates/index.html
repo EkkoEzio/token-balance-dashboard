@@ -22,6 +22,16 @@
   h1{font-size:20px;font-weight:600}
   .last-update{font-size:11px;color:var(--muted);margin-top:2px}
   .next-hint{opacity:.7}
+  .alert-banner{display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:8px;margin-bottom:16px;flex-wrap:wrap;cursor:default}
+  .alert-banner.critical{background:rgba(248,113,113,.12);border:1px solid var(--red)}
+  .alert-banner.warning{background:rgba(251,191,36,.12);border:1px solid var(--amber)}
+  .alert-icon{font-size:14px}
+  .alert-summary{font-size:13px;flex:1}
+  .alert-toggle{background:none;border:1px solid var(--border);color:var(--text);padding:3px 10px;border-radius:5px;cursor:pointer;font-size:11px}
+  .alert-detail{flex-basis:100%;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:none}
+  .alert-detail{display:block}
+  .alert-item{font-size:12px;padding:3px 0}
+  .alert-item.critical{color:var(--red)} .alert-item.warning{color:var(--amber)}
   .toolbar{display:flex;gap:8px}
   .btn{background:var(--card);color:var(--text);border:1px solid var(--border);padding:8px 14px;border-radius:8px;cursor:pointer;font-size:13px}
   .btn:hover{border-color:var(--accent)}
@@ -97,6 +107,18 @@
   </div>
 </div>
 
+<!-- 告警红条 -->
+<div class="alert-banner" x-show="alerts.length>0" :class="maxAlertLevel()">
+  <span class="alert-icon" x-text="maxAlertLevel()==='critical' ? '🔴' : '🟡'"></span>
+  <span class="alert-summary" x-text="alerts.length + '项告警 · ' + alerts.map(a=>a.name+' '+a.window).join('、')"></span>
+  <button class="alert-toggle" @click="alertExpanded=!alertExpanded"><span x-text="alertExpanded ? '收起' : '详情'"></span></button>
+  <div class="alert-detail" x-show="alertExpanded">
+    <template x-for="(a,i) in alerts" :key="i">
+      <div class="alert-item" :class="a.level"><span x-text="(a.level==='critical'?'🔴':'🟡')+' '+a.name+' · '+a.msg"></span></div>
+    </template>
+  </div>
+</div>
+
 <div class="grid">
   <template x-for="p in providers" :key="p.key">
     <div class="card">
@@ -162,13 +184,12 @@
         </div>
       </template>
 
-      <!-- 错误 -->
-      <template x-if="p.status==='error'">
+      <!-- 错误 / Key失效 -->
+      <template x-if="p.status==='error' || p.status==='expired'">
         <div>
-          <div class="placeholder">查询失败</div>
-          <div class="error-text" x-text="p.error || ''"></div>
+          <div class="placeholder" x-text="errIcon(p) + ' ' + (p.error || '查询失败')"></div>
           <div class="status">
-            <span class="dot err"></span><span x-text="ago(p.updated_at)"></span>
+            <span class="dot err"></span><span x-text="(p.error_kind==='auth'||p.error_kind==='expired' ? '需处理 · ' : '稍后重试 · ') + ago(p.updated_at)"></span>
           </div>
         </div>
       </template>
@@ -247,6 +268,24 @@
     <button class="btn mini" style="margin-top:6px" @click="setMasterPw()" x-text="hasMasterPw ? '修改' : '设置'"></button>
     <span class="ok-msg" x-show="masterPwMsg" x-text="masterPwMsg"></span>
   </div>
+
+  <div class="field" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">
+    <div class="prov-head">
+      <label>额度告警</label>
+      <label class="switch">
+        <input type="checkbox" x-model="alertConfig.enabled" @change="saveAlertConfig()">
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div class="key-actions" style="margin-top:8px">
+      <label style="font-size:12px;white-space:nowrap">余额阈值 ¥</label>
+      <input type="number" min="0" step="1" style="width:70px" x-model.number="alertConfig.threshold_balance" @change="saveAlertConfig()">
+      <label style="font-size:12px;white-space:nowrap;margin-left:8px">剩余 %</label>
+      <input type="number" min="1" max="99" style="width:60px" x-model.number="alertConfig.threshold_pct" @change="saveAlertConfig()">
+    </div>
+    <span class="ok-msg" x-show="savedMsg['__alerts__']" x-text="savedMsg['__alerts__']"></span>
+    <p class="hint" style="margin-top:8px">额度低于阈值时顶部红条提示 + macOS 桌面通知(首次触发才弹,不重复)。</p>
+  </div>
 </div>
 
 <!-- 复制Key密码弹窗 -->
@@ -270,6 +309,7 @@ function board(){
     hasMasterPw:false, masterPwInput:'', masterPwMsg:'',
     copyDialog:{open:false, provider:'', title:'', password:'', msg:''},
     lastRefresh:0,
+    alerts:[], alertExpanded:false, alertConfig:{enabled:true,threshold_balance:10,threshold_pct:20},
     // 设置页展示的 provider 元数据(needsKey=false 的走 Edge cookie)
     settingsProviders:[
       {key:'deepseek',name:'DeepSeek',needsKey:true,placeholder:'sk-...'},
@@ -281,8 +321,20 @@ function board(){
     async init(){
       await this.loadConfig();
       await this.forceRefresh();  // 首次加载拉一次
+      await this.loadAlerts();
       setInterval(()=>this.poll(),30000);    // 30秒读缓存(不触发后端请求)
       setInterval(()=>{this.tick++},1000);   // 倒计时每秒tick
+    },
+    async loadAlerts(){
+      try{const r=await fetch('/api/alerts');const d=await r.json();this.alerts=d.alerts||[];this.alertConfig=d.config||this.alertConfig;}
+      catch(e){}
+    },
+    maxAlertLevel(){return this.alerts.some(a=>a.level==='critical')?'critical':'warning'},
+    errIcon(p){return {auth:'🔑',expired:'⏱️',network:'📡',rate_limit:'🐢',unknown:'⚠️'}[p.error_kind]||'⚠️'},
+    async saveAlertConfig(){
+      const r=await fetch('/api/alerts/config',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(this.alertConfig)});
+      const d=await r.json();if(d.ok){this.flashSaved('__alerts__');await this.loadAlerts();}
     },
     async loadConfig(){
       const r=await fetch('/api/config');const d=await r.json();
@@ -295,9 +347,9 @@ function board(){
       catch(e){}
     },
     async forceRefresh(){
-      // 手动刷新:触发后端立即拉取
+      // 手动刷新:触发后端立即拉取,并刷新告警
       this.loading=true;
-      try{const r=await fetch('/api/refresh',{method:'POST'});const d=await r.json();this.providers=d.providers;this.lastRefresh=d.last_refresh||0;}
+      try{const r=await fetch('/api/refresh',{method:'POST'});const d=await r.json();this.providers=d.providers;this.lastRefresh=d.last_refresh||0;await this.loadAlerts();}
       finally{this.loading=false;}
     },
     refresh(){return this.forceRefresh();},  // 兼容旧调用

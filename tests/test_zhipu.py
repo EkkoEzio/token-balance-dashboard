@@ -81,8 +81,8 @@ def test_fetch_success(monkeypatch):
     assert captured["headers"]["Authorization"] == "abc.def"
 
 
-def test_fetch_business_error_returns_error(monkeypatch):
-    """接口 HTTP 200 但 body code=401(令牌过期)时,应返回 error + msg。"""
+def test_fetch_business_401_returns_expired(monkeypatch):
+    """接口 HTTP 200 但 body code=401(令牌过期)→ expired 状态 + expired kind。"""
     monkeypatch.setattr(zp.config, "get_api_keys", lambda: {"zhipu": "expired"})
 
     class FakeResp:
@@ -95,5 +95,24 @@ def test_fetch_business_error_returns_error(monkeypatch):
     monkeypatch.setattr(zp, "_http_get", lambda url, headers, timeout: FakeResp())
     p = ZhipuProvider()
     r = p.fetch()
-    assert r["status"] == "error"
+    assert r["status"] == "expired"  # 专门状态,非通用 error
+    assert r["error_kind"] == "expired"
     assert "令牌已过期" in r["error"]
+
+
+def test_fetch_business_other_code_returns_auth(monkeypatch):
+    """body code 非 401(如 403)→ auth kind。"""
+    monkeypatch.setattr(zp.config, "get_api_keys", lambda: {"zhipu": "bad"})
+
+    class FakeResp:
+        status_code = 200
+        def json(self):
+            return {"code": 403, "msg": "无权限", "success": False}
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(zp, "_http_get", lambda url, headers, timeout: FakeResp())
+    p = ZhipuProvider()
+    r = p.fetch()
+    assert r["status"] == "error"
+    assert r["error_kind"] == "auth"

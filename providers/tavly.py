@@ -2,11 +2,24 @@
 支持多 key(逗号分隔),同卡片展示多个账号额度。每月1号重置。"""
 import requests
 import config
-from providers.base import Provider, STATUS_OK
+from providers.base import Provider, STATUS_OK, ERROR_KINDS
 
-USAGE_URL = "https://api.tavily.com/usage"
+USAGE_URL = "https://api.tavly.com/usage"
 
 _http_get = requests.get
+
+
+def _classify_tavly_exc(e) -> str:
+    """把单个 key 的异常归类成人话文案(供卡片内展示)。"""
+    if isinstance(e, (requests.exceptions.Timeout, requests.exceptions.ConnectionError)):
+        return ERROR_KINDS["network"]
+    if isinstance(e, requests.exceptions.HTTPError):
+        code = e.response.status_code if e.response is not None else 0
+        if code in (401, 403):
+            return ERROR_KINDS["auth"]
+        if code == 429:
+            return ERROR_KINDS["rate_limit"]
+    return ERROR_KINDS["unknown"]
 
 
 def parse_usage(raw: dict) -> dict:
@@ -57,11 +70,13 @@ class TavlyProvider(Provider):
                 data["label"] = label
                 accounts.append(data)
             except Exception as e:
-                msg = str(e)
-                errors.append(f"{label or '账号'}: {msg}")
+                # 归类成人话(卡片内展示)
+                human = _classify_tavly_exc(e)
+                errors.append(f"{label or '账号'}: {human}")
         if not accounts:
-            # 全部失败
-            return self.error("; ".join(errors) or "查询失败")
+            # 全部失败:用第一个错误的 kind 定主状态
+            kind = "unknown"
+            return self.error("; ".join(errors) or "查询失败", kind=kind)
         data = {"accounts": accounts}
         if errors:
             data["errors"] = errors

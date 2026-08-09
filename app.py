@@ -108,6 +108,22 @@ def set_disabled():
     return jsonify(r)
 
 
+@app.route("/api/alerts")
+def alerts():
+    """返回当前触发的告警 + 告警配置。"""
+    return jsonify({
+        "alerts": scheduler.evaluate_alerts(scheduler.get_all()),
+        "config": config.get_alerts_config(),
+    })
+
+
+@app.route("/api/alerts/config", methods=["POST"])
+def set_alerts_config():
+    """更新告警配置。body: {enabled?, threshold_balance?, threshold_pct?}。"""
+    body = request.get_json(force=True)
+    return jsonify(config.set_alerts_config(body))
+
+
 if __name__ == "__main__":
     scheduler.start()
     app.run(host="127.0.0.1", port=config.PORT, debug=False)

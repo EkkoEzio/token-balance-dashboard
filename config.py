@@ -90,6 +90,44 @@ def set_disabled(provider: str, disabled: bool) -> dict:
     return {"ok": True}
 
 
+# ---------- 告警配置 ----------
+_DEFAULT_ALERTS = {"enabled": True, "threshold_balance": 10, "threshold_pct": 20}
+
+
+def get_alerts_config() -> dict:
+    """返回告警配置(开关 + 阈值)。缺失项用默认补全。"""
+    cur = _read().get("alerts", {})
+    return {**_DEFAULT_ALERTS, **cur}
+
+
+def set_alerts_config(patch: dict) -> dict:
+    """部分更新告警配置。"""
+    with _lock:
+        cur = _read()
+        merged = {**_DEFAULT_ALERTS, **cur.get("alerts", {})}
+        if "enabled" in patch:
+            merged["enabled"] = bool(patch["enabled"])
+        if "threshold_balance" in patch:
+            try:
+                merged["threshold_balance"] = max(0, float(patch["threshold_balance"]))
+            except (TypeError, ValueError):
+                return {"ok": False, "error": "余额阈值需为数字"}
+        if "threshold_pct" in patch:
+            try:
+                v = int(patch["threshold_pct"])
+                if not 1 <= v <= 99:
+                    return {"ok": False, "error": "百分比阈值需在 1-99"}
+                merged["threshold_pct"] = v
+            except (TypeError, ValueError):
+                return {"ok": False, "error": "百分比阈值需为整数"}
+        cur["alerts"] = merged
+        try:
+            _write(cur)
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+    return {"ok": True, **merged}
+
+
 # ---------- 主密码(复制 Key 时验证身份,不存明文) ----------
 import hashlib
 import secrets

@@ -22,6 +22,21 @@ def parse_balance(raw: dict) -> dict:
     }
 
 
+def _classify_exc(e) -> str:
+    """把 requests 异常归类成 error kind。"""
+    if isinstance(e, requests.exceptions.Timeout):
+        return "network"
+    if isinstance(e, requests.exceptions.ConnectionError):
+        return "network"
+    if isinstance(e, requests.exceptions.HTTPError):
+        code = e.response.status_code if e.response is not None else 0
+        if code in (401, 403):
+            return "auth"
+        if code == 429:
+            return "rate_limit"
+    return "unknown"
+
+
 class DeepSeekProvider(Provider):
     key = "deepseek"
     name = "DeepSeek"
@@ -41,5 +56,9 @@ class DeepSeekProvider(Provider):
             resp.raise_for_status()
             data = parse_balance(resp.json())
             return self._wrap(STATUS_OK, data)
+        except requests.exceptions.HTTPError as e:
+            return self.error(str(e), kind=_classify_exc(e))
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            return self.error(str(e), kind="network")
         except Exception as e:
-            return self.error(f"查询失败: {e}")
+            return self.error(str(e), kind="unknown")

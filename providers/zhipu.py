@@ -4,7 +4,7 @@ unit 字段区分窗口:3=5小时,6=周。nextResetTime 是毫秒时间戳。"""
 from datetime import datetime, timezone
 import requests
 import config
-from providers.base import Provider, STATUS_OK
+from providers.base import Provider, STATUS_OK, STATUS_EXPIRED, _now_iso
 
 QUOTA_URL = "https://open.bigmodel.cn/api/monitor/usage/quota/limit"
 UNIT_5H = 3
@@ -66,10 +66,21 @@ class ZhipuProvider(Provider):
             )
             resp.raise_for_status()
             body = resp.json()
-            # 智谱业务层错误码:HTTP 200 但 body code != 200(如 key 过期返回 code:401)
-            if body.get("code") != 200:
-                return self.error(body.get("msg", f"接口返回 code={body.get('code')}"))
+            # 智谱业务层错误码:HTTP 200 但 body code != 200
+            code = body.get("code")
+            if code != 200:
+                msg = body.get("msg", f"接口返回 code={code}")
+                if code == 401:
+                    # key 过期/无效,用专门的 expired 状态
+                    return {
+                        "key": self.key, "name": self.name, "status": STATUS_EXPIRED,
+                        "data": {}, "error": msg, "error_kind": "expired",
+                        "error_detail": msg, "updated_at": _now_iso(),
+                    }
+                return self.error(msg, kind="auth")
             data = parse_quota(body)
             return self._wrap(STATUS_OK, data)
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            return self.error(str(e), kind="network")
         except Exception as e:
-            return self.error(f"查询失败: {e}")
+            return self.error(str(e), kind="unknown")

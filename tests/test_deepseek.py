@@ -54,8 +54,9 @@ def test_fetch_success(monkeypatch):
 
 
 def test_fetch_http_error(monkeypatch):
-    """接口 401 时返回 error。"""
+    """接口 401 时返回 error,kind=auth。"""
     import providers.deepseek as ds
+    from providers.base import ERROR_KINDS
     monkeypatch.setattr(ds.config, "get_api_keys", lambda: {"deepseek": "sk-bad"})
 
     class FakeResp:
@@ -64,9 +65,30 @@ def test_fetch_http_error(monkeypatch):
         def json(self):
             return {}
         def raise_for_status(self):
-            raise Exception("401")
+            import requests
+            err = requests.exceptions.HTTPError("401 Client Error")
+            err.response = type("R", (), {"status_code": 401})()
+            raise err
 
     monkeypatch.setattr(ds, "_http_get", lambda url, headers, timeout: FakeResp())
     p = ds.DeepSeekProvider()
     r = p.fetch()
     assert r["status"] == "error"
+    assert r["error_kind"] == "auth"
+    assert r["error"] == ERROR_KINDS["auth"]  # 人话
+    assert "401" in r["error_detail"]  # 原始保留
+
+
+def test_fetch_timeout_classified_network(monkeypatch):
+    """超时归为 network。"""
+    import providers.deepseek as ds
+    monkeypatch.setattr(ds.config, "get_api_keys", lambda: {"deepseek": "sk-x"})
+
+    def boom(url, headers, timeout):
+        raise ds.requests.exceptions.Timeout("timed out")
+
+    monkeypatch.setattr(ds, "_http_get", boom)
+    p = ds.DeepSeekProvider()
+    r = p.fetch()
+    assert r["status"] == "error"
+    assert r["error_kind"] == "network"
