@@ -23,12 +23,21 @@ def test_disabled_provider_skipped(monkeypatch):
     assert keys == {"deepseek", "zhipu", "tavly"}
 
 
+def test_refresh_now_records_timestamp(monkeypatch):
+    """refresh_now 后 last_refresh_ts 应被更新(大于0)。"""
+    scheduler._providers = {}
+    scheduler._results = []
+    scheduler._last_refresh_ts = 0.0
+    monkeypatch.setattr(scheduler.config, "get_disabled", lambda: set())
+    scheduler.refresh_now()
+    assert scheduler.last_refresh_ts() > 0
+
+
 def test_refresh_now_updates_results(monkeypatch):
     """refresh_now 对每个 provider 调 fetch 并更新结果。"""
     scheduler._providers = {}
     scheduler._results = []
     monkeypatch.setattr(scheduler.config, "get_disabled", lambda: set())
-    # refresh_now 内部会 _init_providers 重建实例,所以 patch 类的 fetch
     from providers.deepseek import DeepSeekProvider
     monkeypatch.setattr(DeepSeekProvider, "fetch",
                         lambda self: {"key": "deepseek", "name": "DeepSeek",

@@ -14,12 +14,18 @@ def index():
 
 @app.route("/api/usage")
 def usage():
-    return jsonify({"providers": scheduler.get_all()})
+    return jsonify({
+        "providers": scheduler.get_all(),
+        "last_refresh": scheduler.last_refresh_ts(),
+    })
 
 
 @app.route("/api/refresh", methods=["POST"])
 def refresh():
-    return jsonify({"providers": scheduler.refresh_now()})
+    return jsonify({
+        "providers": scheduler.refresh_now(),
+        "last_refresh": scheduler.last_refresh_ts(),
+    })
 
 
 @app.route("/api/config")

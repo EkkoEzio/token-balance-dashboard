@@ -20,6 +20,8 @@
   body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;min-height:100vh;padding:24px}
   .header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
   h1{font-size:20px;font-weight:600}
+  .last-update{font-size:11px;color:var(--muted);margin-top:2px}
+  .next-hint{opacity:.7}
   .toolbar{display:flex;gap:8px}
   .btn{background:var(--card);color:var(--text);border:1px solid var(--border);padding:8px 14px;border-radius:8px;cursor:pointer;font-size:13px}
   .btn:hover{border-color:var(--accent)}
@@ -85,9 +87,12 @@
 <body data-theme="dark" x-data="board()" x-init="init()" :data-theme="theme">
 
 <div class="header">
-  <h1>Token 余额看板</h1>
+  <div>
+    <h1>Token 余额看板</h1>
+    <div class="last-update" x-show="lastRefresh"><span x-text="'上次更新 · ' + agoTs(lastRefresh)"></span><span class="next-hint" x-text="'  ·  下次自动刷新 ' + nextRefreshIn()"></span></div>
+  </div>
   <div class="toolbar">
-    <button class="btn" @click="refresh()" :disabled="loading"><span x-text="loading ? '刷新中…' : '刷新'"></span></button>
+    <button class="btn" @click="forceRefresh()" :disabled="loading"><span x-text="loading ? '刷新中…' : '刷新'"></span></button>
     <button class="btn" @click="settingsOpen=true">设置</button>
   </div>
 </div>
@@ -264,6 +269,7 @@ function board(){
     disabled:[], keyInputs:{}, keyInputs2:{}, savedMsg:{},
     hasMasterPw:false, masterPwInput:'', masterPwMsg:'',
     copyDialog:{open:false, provider:'', title:'', password:'', msg:''},
+    lastRefresh:0,
     // 设置页展示的 provider 元数据(needsKey=false 的走 Edge cookie)
     settingsProviders:[
       {key:'deepseek',name:'DeepSeek',needsKey:true,placeholder:'sk-...'},
@@ -274,20 +280,29 @@ function board(){
     ],
     async init(){
       await this.loadConfig();
-      await this.refresh();
-      setInterval(()=>this.refresh(),60000);  // 60秒轮询
-      setInterval(()=>{this.tick++},1000);     // 倒计时每秒tick
+      await this.forceRefresh();  // 首次加载拉一次
+      setInterval(()=>this.poll(),30000);    // 30秒读缓存(不触发后端请求)
+      setInterval(()=>{this.tick++},1000);   // 倒计时每秒tick
     },
     async loadConfig(){
       const r=await fetch('/api/config');const d=await r.json();
       this.theme=d.theme;this.disabled=d.disabled||[];
       const m=await fetch('/api/config/master-password-status');this.hasMasterPw=(await m.json()).has_master_password;
     },
-    async refresh(){
+    async poll(){
+      // 只读缓存,不触发后端请求(后端由10分钟定时器自动刷新)
+      try{const r=await fetch('/api/usage');const d=await r.json();this.providers=d.providers;this.lastRefresh=d.last_refresh||0;}
+      catch(e){}
+    },
+    async forceRefresh(){
+      // 手动刷新:触发后端立即拉取
       this.loading=true;
-      try{const r=await fetch('/api/refresh',{method:'POST'});const d=await r.json();this.providers=d.providers;}
+      try{const r=await fetch('/api/refresh',{method:'POST'});const d=await r.json();this.providers=d.providers;this.lastRefresh=d.last_refresh||0;}
       finally{this.loading=false;}
     },
+    refresh(){return this.forceRefresh();},  // 兼容旧调用
+    agoTs(ts){this.tick;if(!ts)return'';const s=Math.floor((Date.now()/1000-ts));return s<60?'刚刚':Math.floor(s/60)+'分钟前'},
+    nextRefreshIn(){this.tick;if(!this.lastRefresh)return'';const remain=600-Math.floor((Date.now()/1000-this.lastRefresh));if(remain<=0)return'即将';const m=Math.floor(remain/60),s=remain%60;return m+'分'+s+'秒后'},
     pct(w){this.tick;return w.total?Math.round((w.used/w.total)*100):0},
     pctRaw(used,total){return total?Math.round((used/total)*100):0},
     barClass(w){this.tick;const p=this.pct(w);return p>=90?'empty':p>=70?'warn':'ok'},
