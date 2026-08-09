@@ -69,3 +69,21 @@ def test_fetch_success(monkeypatch):
     assert r["data"]["level"] == "pro"
     # 关键:鉴权头不加 Bearer
     assert captured["headers"]["Authorization"] == "abc.def"
+
+
+def test_fetch_business_error_returns_error(monkeypatch):
+    """接口 HTTP 200 但 body code=401(令牌过期)时,应返回 error + msg。"""
+    monkeypatch.setattr(zp.config, "get_api_keys", lambda: {"zhipu": "expired"})
+
+    class FakeResp:
+        status_code = 200
+        def json(self):
+            return {"code": 401, "msg": "令牌已过期或验证不正确", "success": False}
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(zp, "_http_get", lambda url, headers, timeout: FakeResp())
+    p = ZhipuProvider()
+    r = p.fetch()
+    assert r["status"] == "error"
+    assert "令牌已过期" in r["error"]

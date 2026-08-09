@@ -50,7 +50,11 @@ class ZhipuProvider(Provider):
                 timeout=10,
             )
             resp.raise_for_status()
-            data = parse_quota(resp.json())
+            body = resp.json()
+            # 智谱业务层错误码:HTTP 200 但 body code != 200(如 key 过期返回 code:401)
+            if body.get("code") != 200:
+                return self.error(body.get("msg", f"接口返回 code={body.get('code')}"))
+            data = parse_quota(body)
             return self._wrap(STATUS_OK, data)
         except Exception as e:
             return self.error(f"查询失败: {e}")

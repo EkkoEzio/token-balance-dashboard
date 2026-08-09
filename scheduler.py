@@ -1,5 +1,5 @@
 """定时拉取调度器。每家 provider 独立间隔,结果缓存内存。
-后台线程拉取,前端轮询读缓存。"""
+后台线程拉取,前端轮询读缓存。被关闭的 provider 不实例化、不刷新、不返回。"""
 import threading
 import time
 
@@ -7,6 +7,12 @@ from providers.deepseek import DeepSeekProvider
 from providers.zhipu import ZhipuProvider
 from providers.qianwen import QianwenProvider
 from providers.minimax import MiniMaxProvider
+from providers.tavly import TavlyProvider
+import config
+
+# 所有可用的 provider 类(顺序即展示顺序)
+_ALL_CLASSES = [DeepSeekProvider, ZhipuProvider, TavlyProvider,
+                QianwenProvider, MiniMaxProvider]
 
 _providers: dict = {}
 _results: list = []
@@ -15,11 +21,13 @@ _started = False
 
 
 def _init_providers():
-    """实例化所有 provider。测试可单独调。"""
+    """实例化未被关闭的 provider。关闭的 provider 完全跳过。"""
     global _providers
-    if _providers:
-        return
-    for cls in (DeepSeekProvider, ZhipuProvider, QianwenProvider, MiniMaxProvider):
+    disabled = config.get_disabled()
+    _providers = {}
+    for cls in _ALL_CLASSES:
+        if cls.key in disabled:
+            continue
         p = cls()
         _providers[p.key] = p
 
@@ -47,8 +55,12 @@ def _loop():
     _init_providers()
     last_pull = {}
     while True:
+        # 配置可能在运行时变(用户开关 provider),每次循环重建
+        _init_providers()
         now = time.time()
         fresh = list(get_all())  # 拿当前快照
+        # 重建快照,移除已关闭的 provider
+        fresh = [r for r in fresh if r["key"] in _providers]
         idx = {r["key"]: i for i, r in enumerate(fresh)}
         changed = False
         for key, p in _providers.items():

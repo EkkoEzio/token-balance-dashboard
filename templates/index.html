@@ -56,6 +56,23 @@
   .seg button.active{background:var(--accent);color:#fff}
   .hint{font-size:12px;color:var(--muted);margin-top:16px;line-height:1.6}
   .error-text{font-size:11px;color:var(--red);margin-top:4px;word-break:break-all}
+  .tavly-accounts{display:flex;gap:12px;flex-wrap:wrap}
+  .tavly-acc{flex:1;min-width:120px;background:var(--bg);border-radius:8px;padding:12px;text-align:center}
+  .tavly-acc-label{font-size:11px;color:var(--muted);margin-bottom:4px}
+  .tavly-num{font-size:26px;font-weight:700}
+  .tavly-sub{font-size:11px;color:var(--muted);margin-top:4px}
+  .prov-field{border-bottom:1px solid var(--border);padding-bottom:14px}
+  .prov-head{display:flex;justify-content:space-between;align-items:center}
+  .key-input{width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);padding:8px 10px;border-radius:6px;font-size:13px}
+  .key-actions{display:flex;align-items:center;gap:6px;margin-top:6px}
+  .btn.mini{padding:5px 10px;font-size:12px}
+  .ok-msg{font-size:11px;color:var(--green)}
+  .switch{position:relative;width:36px;height:20px;display:inline-block;flex-shrink:0}
+  .switch input{opacity:0;width:0;height:0}
+  .slider{position:absolute;cursor:pointer;inset:0;background:var(--border);border-radius:20px;transition:.3s}
+  .slider:before{content:"";position:absolute;height:14px;width:14px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.3s}
+  .switch input:checked + .slider{background:var(--green)}
+  .switch input:checked + .slider:before{transform:translateX(16px)}
 </style>
 </head>
 <body data-theme="dark" x-data="board()" x-init="init()" :data-theme="theme">
@@ -111,6 +128,28 @@
         </div>
       </template>
 
+      <!-- Tavly:多账号并排 -->
+      <template x-if="p.key==='tavly' && p.status==='ok'">
+        <div>
+          <div class="tavly-accounts">
+            <template x-for="(acc,i) in (p.data.accounts||[])" :key="i">
+              <div class="tavly-acc">
+                <div class="tavly-acc-label" x-show="acc.label" x-text="acc.label"></div>
+                <div class="tavly-num" x-text="acc.remaining===null ? '无限' : acc.remaining"></div>
+                <div class="tavly-sub" x-text="(acc.plan||'') + ' · 已用 ' + acc.used + (acc.total!==null ? '/'+acc.total : '')"></div>
+                <div class="reset" x-text="acc.remaining===null ? '' : (acc.total ? pctRaw(acc.used,acc.total)+'% 剩余 · ' : '') + acc.reset_note"></div>
+              </div>
+            </template>
+          </div>
+          <template x-if="p.data.errors && p.data.errors.length">
+            <div class="error-text" x-text="p.data.errors.join('; ')"></div>
+          </template>
+          <div class="status">
+            <span class="dot ok"></span><span x-text="'已更新 · ' + ago(p.updated_at)"></span>
+          </div>
+        </div>
+      </template>
+
       <!-- 错误 -->
       <template x-if="p.status==='error'">
         <div>
@@ -147,19 +186,47 @@
       </template>
     </div>
   </div>
-  <div class="field">
-    <label>DeepSeek API Key</label>
-    <input type="password" placeholder="sk-..." x-model="keyInputs.deepseek">
-    <button class="btn" style="margin-top:6px;width:100%" @click="saveKey('deepseek')">保存</button>
-  </div>
-  <div class="field">
-    <label>智谱 API Key</label>
-    <input type="password" placeholder="xxx.yyy" x-model="keyInputs.zhipu">
-    <button class="btn" style="margin-top:6px;width:100%" @click="saveKey('zhipu')">保存</button>
-  </div>
+
+  <template x-for="prov in settingsProviders" :key="prov.key">
+    <div class="field prov-field">
+      <div class="prov-head">
+        <label x-text="prov.name"></label>
+        <label class="switch">
+          <input type="checkbox" :checked="!disabled.includes(prov.key)" @change="toggleDisable(prov.key, $event.target.checked)">
+          <span class="slider"></span>
+        </label>
+      </div>
+      <!-- 多key(tavly):两个输入框 -->
+      <template x-if="prov.key==='tavly'">
+        <div>
+          <input class="key-input" type="password" placeholder="tvly-账号1..." x-model="keyInputs[prov.key]">
+          <input class="key-input" type="password" placeholder="tvly-账号2(可空)..." x-model="keyInputs2[prov.key]" style="margin-top:6px">
+          <div class="key-actions">
+            <button class="btn mini" @click="saveKeyTavly(prov.key)">保存</button>
+            <button class="btn mini" @click="revealKey(prov.key)">查看</button>
+            <span class="ok-msg" x-show="savedMsg[prov.key]" x-text="savedMsg[prov.key]"></span>
+          </div>
+        </div>
+      </template>
+      <!-- 单key -->
+      <template x-if="prov.key!=='tavly' && prov.needsKey">
+        <div>
+          <input class="key-input" type="password" :placeholder="prov.placeholder||''" x-model="keyInputs[prov.key]">
+          <div class="key-actions">
+            <button class="btn mini" @click="saveKey(prov.key)">保存</button>
+            <button class="btn mini" @click="revealKey(prov.key)">查看</button>
+            <span class="ok-msg" x-show="savedMsg[prov.key]" x-text="savedMsg[prov.key]"></span>
+          </div>
+        </div>
+      </template>
+      <template x-if="!prov.needsKey">
+        <p class="hint" style="margin:0">走 Edge 登录态,无需填 Key。在 Edge 登录对应平台即可。</p>
+      </template>
+    </div>
+  </template>
+
   <p class="hint">
-    千问 / MiniMax 走 Edge 登录态,无需填 Key。<br>
-    在 Edge 浏览器登录对应平台即可(抓包接入后生效)。
+    「查看」可回填已保存的 Key(明文),无需去平台重置。关闭开关后该供应商不再刷新、不展示。
   </p>
 </div>
 
@@ -167,15 +234,24 @@
 function board(){
   return {
     providers:[], loading:false, settingsOpen:false, theme:'dark', tick:0,
-    keyInputs:{deepseek:'',zhipu:''},
+    disabled:[], keyInputs:{}, keyInputs2:{}, savedMsg:{},
+    // 设置页展示的 provider 元数据(needsKey=false 的走 Edge cookie)
+    settingsProviders:[
+      {key:'deepseek',name:'DeepSeek',needsKey:true,placeholder:'sk-...'},
+      {key:'zhipu',name:'智谱 Coding Plan',needsKey:true,placeholder:'xxx.yyy'},
+      {key:'tavly',name:'Tavly',needsKey:true,placeholder:'tvly-...'},
+      {key:'qianwen',name:'千问 Token Plan',needsKey:false},
+      {key:'minimax',name:'MiniMax Token Plan',needsKey:false},
+    ],
     async init(){
       await this.loadConfig();
       await this.refresh();
       setInterval(()=>this.refresh(),60000);  // 60秒轮询
-      setInterval(()=>{this.tick++},1000);     // 倒计时每秒tick(触发响应式重算)
+      setInterval(()=>{this.tick++},1000);     // 倒计时每秒tick
     },
     async loadConfig(){
-      const r=await fetch('/api/config');const d=await r.json();this.theme=d.theme;
+      const r=await fetch('/api/config');const d=await r.json();
+      this.theme=d.theme;this.disabled=d.disabled||[];
     },
     async refresh(){
       this.loading=true;
@@ -183,16 +259,43 @@ function board(){
       finally{this.loading=false;}
     },
     pct(w){this.tick;return w.total?Math.round((w.used/w.total)*100):0},
+    pctRaw(used,total){return total?Math.round((used/total)*100):0},
     barClass(w){this.tick;const p=this.pct(w);return p>=90?'empty':p>=70?'warn':'ok'},
     countdown(iso){this.tick;if(!iso)return'未知';const ms=new Date(iso)-new Date();if(ms<=0)return'已重置';
       const h=Math.floor(ms/36e5),m=Math.floor(ms%36e5/6e4);
       return h>0?h+'小时'+m+'分':m+'分'},
     ago(iso){this.tick;if(!iso)return'';const s=Math.floor((Date.now()-new Date(iso))/1000);
       return s<60?'刚刚':Math.floor(s/60)+'分钟前'},
+    flashSaved(p){this.savedMsg[p]='已保存';setTimeout(()=>{this.savedMsg[p]=''},1500)},
     async saveKey(p){
       const r=await fetch('/api/config/api-key',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({provider:p,key:this.keyInputs[p]})});
-      const d=await r.json();if(d.ok){this.keyInputs[p]='';await this.refresh();}
+      const d=await r.json();if(d.ok){this.keyInputs[p]='';this.flashSaved(p);await this.refresh();}
+    },
+    async saveKeyTavly(p){
+      // tavly 双 key:逗号拼接(空的那个省略)
+      const k1=(this.keyInputs[p]||'').trim(),k2=(this.keyInputs2[p]||'').trim();
+      const combined=k2?[k1,k2].join(','):k1;
+      const r=await fetch('/api/config/api-key',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({provider:p,key:combined})});
+      const d=await r.json();if(d.ok){this.keyInputs[p]='';this.keyInputs2[p]='';this.flashSaved(p);await this.refresh();}
+    },
+    async revealKey(p){
+      const r=await fetch('/api/config/api-key?provider='+p);
+      const d=await r.json();
+      if(d.ok&&d.key){
+        // tavly 拆成两个框;其他单框
+        if(p==='tavly'){const parts=d.key.split(',');this.keyInputs[p]=parts[0]||'';this.keyInputs2[p]=parts[1]||'';}
+        else{this.keyInputs[p]=d.key;}
+        this.flashSaved(p);
+      }
+    },
+    async toggleDisable(p,checked){
+      // checked=true 表示启用,所以 disabled=!checked
+      await fetch('/api/config/disabled',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({provider:p,disabled:!checked})});
+      await this.loadConfig();
+      await this.refresh();
     },
     async setTheme(t){this.theme=t;await fetch('/api/config/theme',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({theme:t})});},
   }

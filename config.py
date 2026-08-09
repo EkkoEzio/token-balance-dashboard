@@ -66,3 +66,25 @@ def set_theme(theme: str) -> dict:
         except Exception as e:
             return {"ok": False, "error": str(e)}
     return {"ok": True}
+
+
+def get_disabled() -> set:
+    """返回被关闭的 provider key 集合。关闭 = 不刷新、不展示。"""
+    return set(_read().get("disabled", []))
+
+
+def set_disabled(provider: str, disabled: bool) -> dict:
+    """设置某 provider 是否关闭。"""
+    with _lock:
+        cur = _read()
+        lst = set(cur.get("disabled", []))
+        if disabled:
+            lst.add(provider)
+        else:
+            lst.discard(provider)
+        cur["disabled"] = sorted(lst)
+        try:
+            _write(cur)
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+    return {"ok": True}
