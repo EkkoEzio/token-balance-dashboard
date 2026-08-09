@@ -1,4 +1,4 @@
-from providers.base import Provider, STATUS_OK, ERROR_KINDS
+from providers.base import Provider, STATUS_OK, ERROR_KINDS, classify_request_exc
 
 
 def test_provider_base_fetch_contract():
@@ -56,3 +56,34 @@ def test_provider_error_classified_kind():
     assert r["error"] == ERROR_KINDS["auth"]
     assert r["error_kind"] == "auth"
     assert r["error_detail"] == "401 Client Error"
+
+
+def test_classify_dns_failure_is_blocked():
+    """DNS 解析失败(域名被墙)归为 blocked,不是普通 network。"""
+    import requests
+    # 构造一个带 NameResolution 字样的 ConnectionError
+    e = requests.exceptions.ConnectionError(
+        "HTTPSConnection: Failed to resolve 'api.tavly.com' "
+        "(NameResolutionError / gaierror / NXDOMAIN)")
+    assert classify_request_exc(e) == "blocked"
+
+
+def test_classify_ssl_reset_is_blocked():
+    """TLS 握手被重置(GFW 干扰)也归为 blocked。"""
+    import requests
+    e = requests.exceptions.SSLError(
+        "HTTPSConnectionPool: Max retries exceeded "
+        "(Caused by SSLError(SSLEOFError(8, '[SSL: UNEXPECTED_EOF_WHILE_READING]')))")
+    assert classify_request_exc(e) == "blocked"
+
+
+def test_classify_timeout_is_network():
+    import requests
+    assert classify_request_exc(requests.exceptions.Timeout("timed out")) == "network"
+
+
+def test_classify_http_401_is_auth():
+    import requests
+    err = requests.exceptions.HTTPError("401")
+    err.response = type("R", (), {"status_code": 401})()
+    assert classify_request_exc(err) == "auth"

@@ -4,7 +4,7 @@ unit 字段区分窗口:3=5小时,6=周。nextResetTime 是毫秒时间戳。"""
 from datetime import datetime, timezone
 import requests
 import config
-from providers.base import Provider, STATUS_OK, STATUS_EXPIRED, _now_iso
+from providers.base import Provider, STATUS_OK, STATUS_EXPIRED, _now_iso, classify_request_exc
 
 QUOTA_URL = "https://open.bigmodel.cn/api/monitor/usage/quota/limit"
 UNIT_5H = 3
@@ -80,7 +80,5 @@ class ZhipuProvider(Provider):
                 return self.error(msg, kind="auth")
             data = parse_quota(body)
             return self._wrap(STATUS_OK, data)
-        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
-            return self.error(str(e), kind="network")
         except Exception as e:
-            return self.error(str(e), kind="unknown")
+            return self.error(str(e), kind=classify_request_exc(e))

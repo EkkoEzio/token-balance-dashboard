@@ -330,7 +330,7 @@ function board(){
       catch(e){}
     },
     maxAlertLevel(){return this.alerts.some(a=>a.level==='critical')?'critical':'warning'},
-    errIcon(p){return {auth:'🔑',expired:'⏱️',network:'📡',rate_limit:'🐢',unknown:'⚠️'}[p.error_kind]||'⚠️'},
+    errIcon(p){return {auth:'🔑',expired:'⏱️',network:'📡',rate_limit:'🐢',blocked:'🚫',unknown:'⚠️'}[p.error_kind]||'⚠️'},
     async saveAlertConfig(){
       const r=await fetch('/api/alerts/config',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify(this.alertConfig)});

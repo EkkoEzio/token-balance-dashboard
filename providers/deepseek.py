@@ -1,7 +1,7 @@
 """DeepSeek 余额查询。公开 API,GET /user/balance,Bearer 鉴权。"""
 import requests
 import config
-from providers.base import Provider, STATUS_OK
+from providers.base import Provider, STATUS_OK, classify_request_exc
 
 BALANCE_URL = "https://api.deepseek.com/user/balance"
 
@@ -20,21 +20,6 @@ def parse_balance(raw: dict) -> dict:
         "topped_up_balance": str(info.get("topped_up_balance", "0")),
         "currency": info.get("currency", "CNY"),
     }
-
-
-def _classify_exc(e) -> str:
-    """把 requests 异常归类成 error kind。"""
-    if isinstance(e, requests.exceptions.Timeout):
-        return "network"
-    if isinstance(e, requests.exceptions.ConnectionError):
-        return "network"
-    if isinstance(e, requests.exceptions.HTTPError):
-        code = e.response.status_code if e.response is not None else 0
-        if code in (401, 403):
-            return "auth"
-        if code == 429:
-            return "rate_limit"
-    return "unknown"
 
 
 class DeepSeekProvider(Provider):
@@ -56,9 +41,5 @@ class DeepSeekProvider(Provider):
             resp.raise_for_status()
             data = parse_balance(resp.json())
             return self._wrap(STATUS_OK, data)
-        except requests.exceptions.HTTPError as e:
-            return self.error(str(e), kind=_classify_exc(e))
-        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
-            return self.error(str(e), kind="network")
         except Exception as e:
-            return self.error(str(e), kind="unknown")
+            return self.error(str(e), kind=classify_request_exc(e))

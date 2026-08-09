@@ -14,8 +14,35 @@ ERROR_KINDS = {
     "expired":    "Key 已过期,请重新生成",
     "network":    "网络超时或连接失败,稍后重试",
     "rate_limit": "请求过频被限流,稍后自动重试",
+    "blocked":    "无法连接(域名解析失败,可能被墙,需开代理/VPN)",
     "unknown":    "查询失败",
 }
+
+
+def classify_request_exc(e) -> str:
+    """通用:把 requests 异常归类成 error kind。各家 provider 复用。
+    优先识别「被墙」特征:DNS 污染 / TLS 握手被重置 / 连接被拒。
+    这些都指向「需要代理/VPN」,而非普通网络抖动。"""
+    import requests
+    msg = str(e)
+    # DNS 解析失败(域名污染)
+    if ("NameResolution" in msg or "nodename nor servname" in msg
+            or "gaierror" in msg or "NXDOMAIN" in msg):
+        return "blocked"
+    # TLS 握手被重置(GFW 对境外域的典型干扰:SSL EOF / connection reset)
+    if ("UNEXPECTED_EOF" in msg or "SSLEOFError" in msg
+            or "ConnectionResetError" in msg or "Connection reset" in msg
+            or "SSLError" in msg):
+        return "blocked"
+    if isinstance(e, (requests.exceptions.Timeout, requests.exceptions.ConnectionError)):
+        return "network"
+    if isinstance(e, requests.exceptions.HTTPError):
+        code = e.response.status_code if e.response is not None else 0
+        if code in (401, 403):
+            return "auth"
+        if code == 429:
+            return "rate_limit"
+    return "unknown"
 
 
 def _now_iso() -> str:

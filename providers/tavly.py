@@ -2,24 +2,18 @@
 支持多 key(逗号分隔),同卡片展示多个账号额度。每月1号重置。"""
 import requests
 import config
-from providers.base import Provider, STATUS_OK, ERROR_KINDS
+from providers.base import Provider, STATUS_OK, ERROR_KINDS, classify_request_exc
 
 USAGE_URL = "https://api.tavly.com/usage"
 
 _http_get = requests.get
 
 
-def _classify_tavly_exc(e) -> str:
-    """把单个 key 的异常归类成人话文案(供卡片内展示)。"""
-    if isinstance(e, (requests.exceptions.Timeout, requests.exceptions.ConnectionError)):
-        return ERROR_KINDS["network"]
-    if isinstance(e, requests.exceptions.HTTPError):
-        code = e.response.status_code if e.response is not None else 0
-        if code in (401, 403):
-            return ERROR_KINDS["auth"]
-        if code == 429:
-            return ERROR_KINDS["rate_limit"]
-    return ERROR_KINDS["unknown"]
+def _human_for_kind(kind: str) -> str:
+    """卡片内展示的人话(DNS 失败特别提示代理)。"""
+    if kind == "blocked":
+        return "无法连接(域名被墙,需开代理/VPN)"
+    return ERROR_KINDS.get(kind, ERROR_KINDS["unknown"])
 
 
 def parse_usage(raw: dict) -> dict:
@@ -57,6 +51,7 @@ class TavlyProvider(Provider):
             return self.unconfigured()
         accounts = []
         errors = []
+        last_kind = "unknown"
         for i, key in enumerate(keys, 1):
             label = f"账号{i}" if len(keys) > 1 else ""
             try:
@@ -71,12 +66,11 @@ class TavlyProvider(Provider):
                 accounts.append(data)
             except Exception as e:
                 # 归类成人话(卡片内展示)
-                human = _classify_tavly_exc(e)
-                errors.append(f"{label or '账号'}: {human}")
+                last_kind = classify_request_exc(e)
+                errors.append(f"{label or '账号'}: {_human_for_kind(last_kind)}")
         if not accounts:
-            # 全部失败:用第一个错误的 kind 定主状态
-            kind = "unknown"
-            return self.error("; ".join(errors) or "查询失败", kind=kind)
+            # 全部失败:用最后一个错误的 kind 定主状态
+            return self.error("; ".join(errors) or "查询失败", kind=last_kind)
         data = {"accounts": accounts}
         if errors:
             data["errors"] = errors
