@@ -5,14 +5,14 @@ from providers.zhipu import ZhipuProvider, parse_quota, UNIT_5H, UNIT_WEEK
 SAMPLE = {
     "code": 200,
     "data": {
-        "level": "pro",
+        "level": "lite",
         "limits": [
-            {"type": "TOKENS_LIMIT", "unit": UNIT_5H, "percentage": 75,
-             "usage": 2000, "currentValue": 1500, "remaining": 500,
-             "nextResetTime": "2026-08-09T15:00:00+08:00"},
-            {"type": "TOKENS_LIMIT", "unit": UNIT_WEEK, "percentage": 80,
-             "usage": 10000, "currentValue": 8000, "remaining": 2000,
-             "nextResetTime": "2026-08-14T10:00:00+08:00"},
+            {"type": "CREDIT_LIMIT", "unit": UNIT_5H, "number": 5,
+             "usage": 2000, "currentValue": 300, "remaining": 1699,
+             "percentage": 15, "nextResetTime": 1786257130291},
+            {"type": "CREDIT_LIMIT", "unit": UNIT_WEEK, "number": 1,
+             "usage": 10000, "currentValue": 1233, "remaining": 8766,
+             "percentage": 12, "nextResetTime": 1786759307984},
             {"type": "TIME_LIMIT", "unit": 0, "percentage": 10},  # 应被过滤
         ],
     },
@@ -21,14 +21,15 @@ SAMPLE = {
 
 def test_parse_quota_windows():
     d = parse_quota(SAMPLE)
-    assert d["level"] == "pro"
+    assert d["level"] == "lite"
     assert len(d["windows"]) == 2  # TIME_LIMIT 被过滤
     w5 = d["windows"][0]
     assert w5["label"] == "5小时"
     assert w5["total"] == 2000
-    assert w5["used"] == 1500
-    assert w5["remaining"] == 500
-    assert w5["reset_at"] == "2026-08-09T15:00:00+08:00"
+    assert w5["used"] == 300
+    assert w5["remaining"] == 1699
+    # 毫秒时间戳应转成 ISO 字符串
+    assert w5["reset_at"].startswith("2026-") and "T" in w5["reset_at"]
     ww = d["windows"][1]
     assert ww["label"] == "7天"
     assert ww["total"] == 10000
@@ -38,6 +39,14 @@ def test_parse_quota_empty_limits():
     d = parse_quota({"data": {"level": "lite", "limits": []}})
     assert d["level"] == "lite"
     assert d["windows"] == []
+
+
+def test_parse_quota_timestamp_ms_to_iso():
+    """nextResetTime 是毫秒时间戳,需转 ISO;为0或缺失时不崩。"""
+    d = parse_quota({"data": {"level": "x", "limits": [
+        {"type": "CREDIT_LIMIT", "unit": UNIT_5H, "usage": 100, "currentValue": 10,
+         "remaining": 90, "nextResetTime": 0}]}})
+    assert d["windows"][0]["reset_at"] == ""
 
 
 def test_fetch_unconfigured(monkeypatch):
@@ -66,7 +75,8 @@ def test_fetch_success(monkeypatch):
     p = ZhipuProvider()
     r = p.fetch()
     assert r["status"] == "ok"
-    assert r["data"]["level"] == "pro"
+    assert r["data"]["level"] == "lite"
+    assert len(r["data"]["windows"]) == 2
     # 关键:鉴权头不加 Bearer
     assert captured["headers"]["Authorization"] == "abc.def"
 

@@ -1,6 +1,7 @@
 """智谱 BigModel Coding Plan 额度查询。
 内部接口 /api/monitor/usage/quota/limit,API Key 鉴权(不加 Bearer)。
-unit 字段区分窗口:3=5小时,6=周。"""
+unit 字段区分窗口:3=5小时,6=周。nextResetTime 是毫秒时间戳。"""
+from datetime import datetime, timezone
 import requests
 import config
 from providers.base import Provider, STATUS_OK
@@ -9,17 +10,31 @@ QUOTA_URL = "https://open.bigmodel.cn/api/monitor/usage/quota/limit"
 UNIT_5H = 3
 UNIT_WEEK = 6
 _UNIT_LABEL = {UNIT_5H: "5小时", UNIT_WEEK: "7天"}
+# 接受所有 *_LIMIT 的额度类型(CREDIT_LIMIT=积分套餐;TOKENS_LIMIT 为旧版)
+_QUOTA_TYPES = {"CREDIT_LIMIT", "TOKENS_LIMIT"}
 
 _http_get = requests.get
 
 
+def _ms_to_iso(ms) -> str:
+    """毫秒时间戳转 ISO 字符串。0/空/异常返回空串。"""
+    try:
+        n = int(ms)
+        if n <= 0:
+            return ""
+        return datetime.fromtimestamp(n / 1000, tz=timezone.utc).isoformat()
+    except (TypeError, ValueError):
+        return ""
+
+
 def parse_quota(raw: dict) -> dict:
     """把 monitor 接口响应解析成展示数据。
-    过滤 type==TOKENS_LIMIT,按 unit 区分窗口。"""
+    过滤 type ∈ {CREDIT_LIMIT, TOKENS_LIMIT},按 unit 区分窗口。
+    nextResetTime 毫秒时间戳转 ISO。"""
     data = raw.get("data") or {}
     windows = []
     for lim in data.get("limits") or []:
-        if lim.get("type") != "TOKENS_LIMIT":
+        if lim.get("type") not in _QUOTA_TYPES:
             continue
         unit = lim.get("unit")
         windows.append({
@@ -28,7 +43,7 @@ def parse_quota(raw: dict) -> dict:
             "used": lim.get("currentValue", 0),
             "remaining": lim.get("remaining", 0),
             "percentage": lim.get("percentage", 0),
-            "reset_at": lim.get("nextResetTime", ""),
+            "reset_at": _ms_to_iso(lim.get("nextResetTime", 0)),
         })
     return {"level": data.get("level", ""), "windows": windows}
 

@@ -73,6 +73,13 @@
   .slider:before{content:"";position:absolute;height:14px;width:14px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.3s}
   .switch input:checked + .slider{background:var(--green)}
   .switch input:checked + .slider:before{transform:translateX(16px)}
+  .copy-dialog{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.9);width:320px;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;z-index:20;opacity:0;pointer-events:none;transition:.2s}
+  .copy-dialog.open{opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1)}
+  .copy-dialog h3{font-size:15px;margin-bottom:4px}
+  .copy-dialog input{width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);padding:8px 10px;border-radius:6px;font-size:13px;margin-top:4px}
+  .copy-dialog-msg{font-size:11px;color:var(--red);margin-top:6px;min-height:14px}
+  .copy-dialog-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+  .copy-dialog-msg.success{color:var(--green)}
 </style>
 </head>
 <body data-theme="dark" x-data="board()" x-init="init()" :data-theme="theme">
@@ -203,7 +210,7 @@
           <input class="key-input" type="password" placeholder="tvly-账号2(可空)..." x-model="keyInputs2[prov.key]" style="margin-top:6px">
           <div class="key-actions">
             <button class="btn mini" @click="saveKeyTavly(prov.key)">保存</button>
-            <button class="btn mini" @click="revealKey(prov.key)">查看</button>
+            <button class="btn mini" @click="copyKey(prov.key)">复制</button>
             <span class="ok-msg" x-show="savedMsg[prov.key]" x-text="savedMsg[prov.key]"></span>
           </div>
         </div>
@@ -214,7 +221,7 @@
           <input class="key-input" type="password" :placeholder="prov.placeholder||''" x-model="keyInputs[prov.key]">
           <div class="key-actions">
             <button class="btn mini" @click="saveKey(prov.key)">保存</button>
-            <button class="btn mini" @click="revealKey(prov.key)">查看</button>
+            <button class="btn mini" @click="copyKey(prov.key)">复制</button>
             <span class="ok-msg" x-show="savedMsg[prov.key]" x-text="savedMsg[prov.key]"></span>
           </div>
         </div>
@@ -226,8 +233,28 @@
   </template>
 
   <p class="hint">
-    「查看」可回填已保存的 Key(明文),无需去平台重置。关闭开关后该供应商不再刷新、不展示。
+    「复制」需先输主密码验证身份(首次使用请在下方设置主密码)。关闭开关后该供应商不再刷新、不展示。
   </p>
+
+  <div class="field" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">
+    <label x-text="hasMasterPw ? '修改主密码' : '设置主密码'"></label>
+    <input type="password" placeholder="用于复制 Key 时验证身份" x-model="masterPwInput">
+    <button class="btn mini" style="margin-top:6px" @click="setMasterPw()" x-text="hasMasterPw ? '修改' : '设置'"></button>
+    <span class="ok-msg" x-show="masterPwMsg" x-text="masterPwMsg"></span>
+  </div>
+</div>
+
+<!-- 复制Key密码弹窗 -->
+<div class="overlay" :class="copyDialog.open?'show':''" @click="copyDialog.open=false"></div>
+<div class="copy-dialog" :class="copyDialog.open?'open':''">
+  <h3 x-text="copyDialog.title"></h3>
+  <p class="hint" style="margin:8px 0">输入主密码以复制该 Key</p>
+  <input type="password" placeholder="主密码" x-model="copyDialog.password" @keydown.enter="confirmCopy()">
+  <div class="copy-dialog-msg" x-show="copyDialog.msg" x-text="copyDialog.msg"></div>
+  <div class="copy-dialog-actions">
+    <button class="btn" @click="copyDialog.open=false">取消</button>
+    <button class="btn" @click="confirmCopy()">确认复制</button>
+  </div>
 </div>
 
 <script>
@@ -235,6 +262,8 @@ function board(){
   return {
     providers:[], loading:false, settingsOpen:false, theme:'dark', tick:0,
     disabled:[], keyInputs:{}, keyInputs2:{}, savedMsg:{},
+    hasMasterPw:false, masterPwInput:'', masterPwMsg:'',
+    copyDialog:{open:false, provider:'', title:'', password:'', msg:''},
     // 设置页展示的 provider 元数据(needsKey=false 的走 Edge cookie)
     settingsProviders:[
       {key:'deepseek',name:'DeepSeek',needsKey:true,placeholder:'sk-...'},
@@ -252,6 +281,7 @@ function board(){
     async loadConfig(){
       const r=await fetch('/api/config');const d=await r.json();
       this.theme=d.theme;this.disabled=d.disabled||[];
+      const m=await fetch('/api/config/master-password-status');this.hasMasterPw=(await m.json()).has_master_password;
     },
     async refresh(){
       this.loading=true;
@@ -273,22 +303,48 @@ function board(){
       const d=await r.json();if(d.ok){this.keyInputs[p]='';this.flashSaved(p);await this.refresh();}
     },
     async saveKeyTavly(p){
-      // tavly 双 key:逗号拼接(空的那个省略)
+      // tavly 双 key:过滤空值后逗号拼接
       const k1=(this.keyInputs[p]||'').trim(),k2=(this.keyInputs2[p]||'').trim();
-      const combined=k2?[k1,k2].join(','):k1;
+      const parts=[k1,k2].filter(x=>x);
+      const combined=parts.join(',');
       const r=await fetch('/api/config/api-key',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({provider:p,key:combined})});
       const d=await r.json();if(d.ok){this.keyInputs[p]='';this.keyInputs2[p]='';this.flashSaved(p);await this.refresh();}
     },
     async revealKey(p){
-      const r=await fetch('/api/config/api-key?provider='+p);
+      // 已弃用,保留为 no-op(用 copyKey 代替)
+    },
+    copyKey(p){
+      // 打开密码弹窗
+      const name=this.settingsProviders.find(x=>x.key===p)?.name||p;
+      this.copyDialog={open:true,provider:p,title:'复制 '+name+' Key',password:'',msg:''};
+    },
+    async confirmCopy(){
+      const p=this.copyDialog.provider;
+      const r=await fetch('/api/config/verify',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({provider:p,password:this.copyDialog.password})});
       const d=await r.json();
       if(d.ok&&d.key){
-        // tavly 拆成两个框;其他单框
-        if(p==='tavly'){const parts=d.key.split(',');this.keyInputs[p]=parts[0]||'';this.keyInputs2[p]=parts[1]||'';}
-        else{this.keyInputs[p]=d.key;}
-        this.flashSaved(p);
+        // 复制到剪贴板
+        try{await navigator.clipboard.writeText(d.key);}catch(e){
+          // 兜底:选中文本
+          const ta=document.createElement('textarea');ta.value=d.key;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();
+        }
+        this.copyDialog.msg='已复制到剪贴板!';
+        this.copyDialog.open=false;
+        setTimeout(()=>this.settingsOpen=false,500);
+      }else{
+        this.copyDialog.msg=d.error||'复制失败';
       }
+    },
+    async setMasterPw(){
+      const pw=this.masterPwInput;
+      if(!pw){this.masterPwMsg='请输入密码';return;}
+      const r=await fetch('/api/config/master-password',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({password:pw})});
+      const d=await r.json();
+      if(d.ok){this.hasMasterPw=true;this.masterPwInput='';this.masterPwMsg='已设置';setTimeout(()=>this.masterPwMsg='',1500);}
+      else{this.masterPwMsg=d.error||'设置失败';}
     },
     async toggleDisable(p,checked){
       // checked=true 表示启用,所以 disabled=!checked

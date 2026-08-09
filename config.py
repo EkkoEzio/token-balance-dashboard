@@ -88,3 +88,51 @@ def set_disabled(provider: str, disabled: bool) -> dict:
         except Exception as e:
             return {"ok": False, "error": str(e)}
     return {"ok": True}
+
+
+# ---------- 主密码(复制 Key 时验证身份,不存明文) ----------
+import hashlib
+import secrets
+
+_PBKDF2_ITERS = 200_000
+
+
+def _hash_password(password: str) -> dict:
+    """PBKDF2 哈希。返回 {salt, hash, iters}。"""
+    salt = secrets.token_hex(16)
+    h = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"),
+                            bytes.fromhex(salt), _PBKDF2_ITERS).hex()
+    return {"salt": salt, "hash": h, "iters": _PBKDF2_ITERS}
+
+
+def has_master_password() -> bool:
+    """是否已设置主密码。"""
+    return bool(_read().get("master_password"))
+
+
+def set_master_password(password: str) -> dict:
+    """设置/修改主密码。存哈希不存明文。"""
+    if not password or len(password) < 4:
+        return {"ok": False, "error": "密码至少 4 位"}
+    with _lock:
+        cur = _read()
+        cur["master_password"] = _hash_password(password)
+        try:
+            _write(cur)
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+    return {"ok": True}
+
+
+def check_master_password(password: str) -> bool:
+    """校验主密码。未设置或错误返回 False。"""
+    stored = _read().get("master_password")
+    if not stored:
+        return False
+    try:
+        h = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"),
+                                bytes.fromhex(stored["salt"]),
+                                stored.get("iters", _PBKDF2_ITERS)).hex()
+        return secrets.compare_digest(h, stored["hash"])
+    except Exception:
+        return False

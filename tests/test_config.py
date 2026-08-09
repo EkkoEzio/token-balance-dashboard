@@ -48,3 +48,27 @@ def test_set_disabled(tmp_path, monkeypatch):
     # 持久化
     raw = json.loads((tmp_path / "config.json").read_text("utf-8"))
     assert raw["disabled"] == ["qianwen"]
+
+
+def test_master_password_set_and_check(tmp_path, monkeypatch):
+    """设置主密码后,正确密码校验通过,错误密码失败。"""
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "CONFIG_FILE", tmp_path / "config.json")
+    assert config.has_master_password() is False
+    assert config.set_master_password("mypass123")["ok"] is True
+    assert config.has_master_password() is True
+    assert config.check_master_password("mypass123") is True
+    assert config.check_master_password("wrong") is False
+    # 明文不落盘(只存哈希)
+    raw = json.loads((tmp_path / "config.json").read_text("utf-8"))
+    assert "mypass123" not in json.dumps(raw)
+    assert "master_password" in raw  # 存的是 {salt, hash}
+
+
+def test_change_master_password(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "CONFIG_FILE", tmp_path / "config.json")
+    config.set_master_password("oldpass")
+    config.set_master_password("newpass")
+    assert config.check_master_password("oldpass") is False
+    assert config.check_master_password("newpass") is True

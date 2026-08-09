@@ -35,13 +35,9 @@ def get_config():
 
 @app.route("/api/config/api-key", methods=["GET", "POST"])
 def api_key():
-    """GET 查看某 provider 已存的 key 明文(本轮不加密);POST 设置 key。"""
+    """POST 设置 key。GET 不再明文返回(改用 verify 接口需主密码)。"""
     if request.method == "GET":
-        provider = request.args.get("provider", "")
-        if not provider:
-            return jsonify({"ok": False, "error": "缺少 provider"}), 400
-        val = config.get_api_keys().get(provider, "")
-        return jsonify({"ok": True, "key": val})
+        return jsonify({"ok": False, "error": "请用 /api/config/verify 接口"}), 405
 
     body = request.get_json(force=True)
     provider = body.get("provider", "")
@@ -53,6 +49,35 @@ def api_key():
         # 改了 key 立刻刷新该家
         scheduler.refresh_now()
     return jsonify(r)
+
+
+@app.route("/api/config/verify", methods=["POST"])
+def verify_and_copy():
+    """验证主密码后返回某 provider 的 key 明文(供复制)。
+    body: {provider, password}。未设主密码或密码错都返回失败。"""
+    body = request.get_json(force=True)
+    provider = body.get("provider", "")
+    password = body.get("password", "")
+    if not provider:
+        return jsonify({"ok": False, "error": "缺少 provider"}), 400
+    if not config.has_master_password():
+        return jsonify({"ok": False, "error": "未设置主密码,请先在设置里配置"})
+    if not config.check_master_password(password):
+        return jsonify({"ok": False, "error": "主密码错误"})
+    val = config.get_api_keys().get(provider, "")
+    return jsonify({"ok": bool(val), "key": val})
+
+
+@app.route("/api/config/master-password", methods=["POST"])
+def set_master_pw():
+    """设置/修改主密码。body: {password}。"""
+    body = request.get_json(force=True)
+    return jsonify(config.set_master_password(body.get("password", "")))
+
+
+@app.route("/api/config/master-password-status")
+def master_pw_status():
+    return jsonify({"has_master_password": config.has_master_password()})
 
 
 @app.route("/api/config/theme", methods=["POST"])
