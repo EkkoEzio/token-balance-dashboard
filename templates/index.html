@@ -131,7 +131,10 @@
       <div class="card-head">
         <div class="card-head-left">
           <span class="card-name" x-text="p.name"></span>
-          <span class="tier" x-show="p.data && p.data.level" x-text="'套餐 · ' + (p.data.level||'')"></span>
+          <span class="tier" x-show="p.data && p.data.level">
+            <span x-text="'套餐 · ' + (p.data.level||'')"></span>
+            <span x-show="p.data.remaining_days!=null" x-text="' · 剩 ' + p.data.remaining_days + '天'"></span>
+          </span>
         </div>
         <div class="card-head-right">
           <button class="card-refresh" @click="refreshOne(p.key)" :disabled="refreshing[p.key]===true" :title="'单独刷新'+p.name" :class="refreshing[p.key]==='ok'?'refresh-ok':''">
@@ -166,7 +169,7 @@
               <div class="bar">
                 <div class="bar-fill" :class="barClass(w)" :style="'width:' + pct(w) + '%'"></div>
               </div>
-              <div class="reset" x-text="pct(w) + '% · ' + countdown(w.reset_at) + '后重置'"></div>
+              <div class="reset" x-text="pct(w) + '% · 剩余 ' + (100-pct(w)) + '% · ' + countdown(w.reset_at) + '后重置'"></div>
             </div>
           </template>
           <div class="status">
@@ -175,19 +178,45 @@
         </div>
       </template>
 
-      <!-- Tavly:多账号并排 -->
+      <!-- 千问:窗口型(同智谱排版,但有套餐到期/5h限时说明) -->
+      <template x-if="p.key==='qianwen' && p.status==='ok'">
+        <div>
+          <template x-for="(w,i) in (p.data.windows||[])" :key="i">
+            <div class="window">
+              <div class="window-label">
+                <span x-text="w.label + '窗口'"></span>
+                <span x-text="w.total ? (w.used + ' / ' + w.total + ' Credits') : w.percentage + '% 已用'"></span>
+              </div>
+              <div class="bar" x-show="w.total">
+                <div class="bar-fill" :class="barClass(w)" :style="'width:' + pct(w) + '%'"></div>
+              </div>
+              <div class="reset" x-text="(w.total ? (pct(w)+'% · 剩 '+(100-pct(w))+'% · ' : (w.percentage+'% 已用 · ')) + countdown(w.reset_at) + '后重置'"></div>
+            </div>
+          </template>
+          <template x-if="p.data.note">
+            <div class="reset" style="margin-bottom:8px;color:var(--amber)" x-text="'⚠️ ' + p.data.note"></div>
+          </template>
+          <div class="status">
+            <span class="dot ok"></span><span x-text="'已更新 · ' + agoFull(p.updated_at)"></span>
+          </div>
+        </div>
+      </template>
+
+      <!-- Tavly:window 型,和智谱同款排版 -->
       <template x-if="p.key==='tavly' && p.status==='ok'">
         <div>
-          <div class="tavly-accounts">
-            <template x-for="(acc,i) in (p.data.accounts||[])" :key="i">
-              <div class="tavly-acc">
-                <div class="tavly-acc-label" x-show="acc.label" x-text="acc.label"></div>
-                <div class="tavly-num" x-text="acc.remaining===null ? '无限' : acc.remaining"></div>
-                <div class="tavly-sub" x-text="(acc.plan||'') + ' · 已用 ' + acc.used + (acc.total!==null ? '/'+acc.total : '')"></div>
-                <div class="reset" x-text="acc.remaining===null ? '' : (acc.total ? pctRaw(acc.used,acc.total)+'% 剩余 · ' : '') + acc.reset_note"></div>
+          <template x-for="(acc,i) in (p.data.accounts||[])" :key="i">
+            <div class="window">
+              <div class="window-label">
+                <span x-text="(acc.plan||'Tavly') + (acc.label ? ' · ' + acc.label : '')"></span>
+                <span x-text="acc.remaining===null ? '无限' : (acc.used + ' / ' + acc.total + ' 次')"></span>
               </div>
-            </template>
-          </div>
+              <div class="bar" x-show="acc.total">
+                <div class="bar-fill" :class="tavlyBarClass(acc)" :style="'width:' + pctRaw(acc.used,acc.total) + '%'"></div>
+              </div>
+              <div class="reset" x-text="acc.remaining===null ? acc.reset_note : (acc.total ? pctRaw(acc.used,acc.total)+'% · 剩余 '+(100-pctRaw(acc.used,acc.total))+'% · ' : '') + acc.reset_note"></div>
+            </div>
+          </template>
           <template x-if="p.data.errors && p.data.errors.length">
             <div class="error-text" x-text="p.data.errors.join('; ')"></div>
           </template>
@@ -254,8 +283,20 @@
           </div>
         </div>
       </template>
-      <!-- 单key -->
-      <template x-if="prov.key!=='tavly' && prov.needsKey">
+      <!-- 千问:sec_token + cookie(特殊双字段) -->
+      <template x-if="prov.key==='qianwen'">
+        <div>
+          <input class="key-input" type="password" placeholder="sec_token (从F12 Payload里抓)" x-model="keyInputs['qianwen_sec_token']">
+          <input class="key-input" type="password" placeholder="cookie (login_qianwenai_ticket=...)" x-model="keyInputs['qianwen_cookie']" style="margin-top:6px">
+          <div class="key-actions">
+            <button class="btn mini" @click="saveQianwen()">保存</button>
+            <span class="ok-msg" x-show="savedMsg['qianwen']" x-text="savedMsg['qianwen']"></span>
+          </div>
+          <p class="hint" style="margin:4px 0 0">登录态会过期,失效后需重新抓取这两个值。</p>
+        </div>
+      </template>
+      <!-- 单key(deepseek/智谱) -->
+      <template x-if="prov.key!=='tavly' && prov.key!=='qianwen' && prov.needsKey===true">
         <div>
           <input class="key-input" type="password" :placeholder="prov.placeholder||''" x-model="keyInputs[prov.key]">
           <div class="key-actions">
@@ -329,7 +370,7 @@ function board(){
       {key:'deepseek',name:'DeepSeek',needsKey:true,placeholder:'sk-...'},
       {key:'zhipu',name:'智谱 Coding Plan',needsKey:true,placeholder:'xxx.yyy'},
       {key:'tavly',name:'Tavly',needsKey:true,placeholder:'tvly-...'},
-      {key:'qianwen',name:'千问 Token Plan',needsKey:false},
+      {key:'qianwen',name:'千问 Token Plan',needsKey:'qianwen'},
       {key:'minimax',name:'MiniMax Token Plan',needsKey:false},
     ],
     async init(){
@@ -391,6 +432,7 @@ function board(){
     pct(w){this.tick;return w.total?Math.round((w.used/w.total)*100):0},
     pctRaw(used,total){return total?Math.round((used/total)*100):0},
     barClass(w){this.tick;const p=this.pct(w);return p>=90?'empty':p>=70?'warn':'ok'},
+    tavlyBarClass(acc){this.tick;const p=this.pctRaw(acc.used,acc.total);return p>=90?'empty':p>=70?'warn':'ok'},
     countdown(iso){this.tick;if(!iso)return'未知';const ms=new Date(iso)-new Date();if(ms<=0)return'已重置';
       const h=Math.floor(ms/36e5),m=Math.floor(ms%36e5/6e4);
       return h>0?h+'小时'+m+'分':m+'分'},
@@ -410,6 +452,18 @@ function board(){
       const r=await fetch('/api/config/api-key',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({provider:p,key:combined})});
       const d=await r.json();if(d.ok){this.keyInputs[p]='';this.keyInputs2[p]='';this.flashSaved(p);await this.refresh();}
+    },
+    async saveQianwen(){
+      // 千问:sec_token + cookie 分两次存
+      const sec=(this.keyInputs['qianwen_sec_token']||'').trim();
+      const ck=(this.keyInputs['qianwen_cookie']||'').trim();
+      if(!sec||!ck){this.savedMsg['qianwen']='两个都要填';setTimeout(()=>this.savedMsg['qianwen']='',1500);return;}
+      await fetch('/api/config/api-key',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({provider:'qianwen_sec_token',key:sec})});
+      await fetch('/api/config/api-key',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({provider:'qianwen_cookie',key:ck})});
+      this.keyInputs['qianwen_sec_token']='';this.keyInputs['qianwen_cookie']='';
+      this.flashSaved('qianwen');await this.refresh();
     },
     async revealKey(p){
       // 已弃用,保留为 no-op(用 copyKey 代替)
