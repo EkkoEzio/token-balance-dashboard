@@ -41,6 +41,11 @@
   .card-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
   .card-name{font-size:15px;font-weight:600}
   .tier{font-size:12px;color:var(--muted)}
+  .card-refresh{background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:2px 6px;border-radius:4px;line-height:1}
+  .card-refresh:hover{color:var(--accent);background:var(--bg)}
+  .card-refresh:disabled{opacity:.4;cursor:default}
+  .card-head-left{display:flex;align-items:center;gap:8px;min-width:0}
+  .card-head-right{display:flex;align-items:center;gap:8px;flex-shrink:0}
   .balance{font-size:32px;font-weight:700;margin:8px 0}
   .balance-sub{font-size:12px;color:var(--muted);margin-bottom:12px}
   .window{margin-bottom:14px}
@@ -123,8 +128,15 @@
   <template x-for="p in providers" :key="p.key">
     <div class="card">
       <div class="card-head">
-        <span class="card-name" x-text="p.name"></span>
-        <span class="tier" x-show="p.data && p.data.level" x-text="'套餐 · ' + (p.data.level||'')"></span>
+        <div class="card-head-left">
+          <span class="card-name" x-text="p.name"></span>
+          <span class="tier" x-show="p.data && p.data.level" x-text="'套餐 · ' + (p.data.level||'')"></span>
+        </div>
+        <div class="card-head-right">
+          <button class="card-refresh" @click="refreshOne(p.key)" :disabled="refreshing[p.key]" :title="'单独刷新'+p.name">
+            <span x-text="refreshing[p.key] ? '⟳' : '↻'"></span>
+          </button>
+        </div>
       </div>
 
       <!-- 余额型:DeepSeek -->
@@ -310,6 +322,7 @@ function board(){
     copyDialog:{open:false, provider:'', title:'', password:'', msg:''},
     lastRefresh:0,
     alerts:[], alertExpanded:false, alertConfig:{enabled:true,threshold_balance:10,threshold_pct:20},
+    refreshing:{},  // 各卡片单独刷新状态 {key: bool}
     // 设置页展示的 provider 元数据(needsKey=false 的走 Edge cookie)
     settingsProviders:[
       {key:'deepseek',name:'DeepSeek',needsKey:true,placeholder:'sk-...'},
@@ -353,6 +366,20 @@ function board(){
       finally{this.loading=false;}
     },
     refresh(){return this.forceRefresh();},  // 兼容旧调用
+    async refreshOne(key){
+      // 只刷新单个 provider(不影响其他家)
+      this.refreshing[key]=true;
+      try{
+        const r=await fetch('/api/refresh/'+key,{method:'POST'});
+        const d=await r.json();
+        if(d.ok&&d.result){
+          // 替换该卡片的数据
+          this.providers=this.providers.map(p=>p.key===key?d.result:p);
+          await this.loadAlerts();
+        }
+      }catch(e){}
+      finally{this.refreshing[key]=false;}
+    },
     agoTs(ts){this.tick;if(!ts)return'';const s=Math.floor((Date.now()/1000-ts));return s<60?'刚刚':Math.floor(s/60)+'分钟前'},
     nextRefreshIn(){this.tick;if(!this.lastRefresh)return'';const remain=600-Math.floor((Date.now()/1000-this.lastRefresh));if(remain<=0)return'即将';const m=Math.floor(remain/60),s=remain%60;return m+'分'+s+'秒后'},
     pct(w){this.tick;return w.total?Math.round((w.used/w.total)*100):0},

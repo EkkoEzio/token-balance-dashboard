@@ -28,6 +28,15 @@ def refresh():
     })
 
 
+@app.route("/api/refresh/<key>", methods=["POST"])
+def refresh_one(key):
+    """只刷新单个 provider(卡片单独刷新按钮)。"""
+    result = scheduler.refresh_one(key)
+    if result is None:
+        return jsonify({"ok": False, "error": f"未知的供应商: {key}"}), 404
+    return jsonify({"ok": True, "result": result})
+
+
 @app.route("/api/config")
 def get_config():
     """返回主题 + 各 provider 是否已配置 key(不泄露 key 值) + 关闭列表。"""

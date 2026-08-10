@@ -73,6 +73,27 @@ def get_all() -> list:
         return list(_results)
 
 
+def refresh_one(key: str) -> dict | None:
+    """只刷新单个 provider,更新该家在缓存中的结果,返回新结果。
+    用于卡片单独刷新(不影响其他家,不触发全量请求,避免风控)。"""
+    _init_providers()
+    p = _providers.get(key)
+    if not p:
+        return None
+    result = p.fetch()
+    with _results_lock:
+        # 替换缓存中该 key 的结果(若存在)
+        for i, r in enumerate(_results):
+            if r.get("key") == key:
+                _results[i] = result
+                break
+        else:
+            _results.append(result)
+    # 单家刷新也走告警判定(通知)
+    _check_and_notify(list(_results))
+    return result
+
+
 def last_refresh_ts() -> float:
     """返回上次刷新的时间戳(供前端展示「X分钟前更新」)。"""
     return _last_refresh_ts
