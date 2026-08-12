@@ -1,8 +1,10 @@
 import scheduler
+import config
 
 
-def test_get_all_returns_active_providers(monkeypatch):
+def test_get_all_returns_active_providers(monkeypatch, tmp_path):
     """默认所有 provider 都返回(get_all 不再隐式 refresh,需显式 refresh_now)。"""
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     scheduler._providers = {}
     scheduler._results = []
     monkeypatch.setattr(scheduler.config, "get_disabled", lambda: set())
@@ -17,10 +19,16 @@ def test_get_all_returns_active_providers(monkeypatch):
     assert keys == {"deepseek", "zhipu", "tavly", "qianwen", "minimax"}
 
 
-def test_disabled_provider_skipped(monkeypatch):
+def test_disabled_provider_skipped(monkeypatch, tmp_path):
     """关闭的 provider 不出现在结果里。"""
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     scheduler._providers = {}
     scheduler._results = []
+    # stub 所有 fetch,不打网络(关闭的 provider 不会被实例化,也不会被 fetch)
+    for cls in scheduler._ALL_CLASSES:
+        monkeypatch.setattr(cls, "fetch",
+                            lambda self: {"key": self.key, "name": self.name,
+                                          "status": "ok", "data": {}, "updated_at": "t"})
     monkeypatch.setattr(scheduler.config, "get_disabled", lambda: {"minimax", "qianwen"})
     scheduler._init_providers()
     results = scheduler.refresh_now()
@@ -28,18 +36,25 @@ def test_disabled_provider_skipped(monkeypatch):
     assert keys == {"deepseek", "zhipu", "tavly"}
 
 
-def test_refresh_now_records_timestamp(monkeypatch):
+def test_refresh_now_records_timestamp(monkeypatch, tmp_path):
     """refresh_now 后 last_refresh_ts 应被更新(大于0)。"""
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     scheduler._providers = {}
     scheduler._results = []
     scheduler._last_refresh_ts = 0.0
     monkeypatch.setattr(scheduler.config, "get_disabled", lambda: set())
+    # stub 所有 fetch,不打网络
+    for cls in scheduler._ALL_CLASSES:
+        monkeypatch.setattr(cls, "fetch",
+                            lambda self: {"key": self.key, "name": self.name,
+                                          "status": "ok", "data": {}, "updated_at": "t"})
     scheduler.refresh_now()
     assert scheduler.last_refresh_ts() > 0
 
 
-def test_refresh_now_updates_results(monkeypatch):
+def test_refresh_now_updates_results(monkeypatch, tmp_path):
     """refresh_now 对每个 provider 调 fetch 并更新结果。"""
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     scheduler._providers = {}
     scheduler._results = []
     monkeypatch.setattr(scheduler.config, "get_disabled", lambda: set())
@@ -47,6 +62,15 @@ def test_refresh_now_updates_results(monkeypatch):
     monkeypatch.setattr(DeepSeekProvider, "fetch",
                         lambda self: {"key": "deepseek", "name": "DeepSeek",
                                       "status": "ok", "data": {"x": 1}, "updated_at": "t"})
+    # 其余四家 stub 成通用 ok dict,保持 hermetic(不打网络)
+    from providers.zhipu import ZhipuProvider
+    from providers.tavly import TavlyProvider
+    from providers.qianwen import QianwenProvider
+    from providers.minimax import MiniMaxProvider
+    _generic = lambda self: {"key": self.key, "name": self.name,
+                             "status": "ok", "data": {}, "updated_at": "t"}
+    for cls in (ZhipuProvider, TavlyProvider, QianwenProvider, MiniMaxProvider):
+        monkeypatch.setattr(cls, "fetch", _generic)
     results = scheduler.refresh_now()
     ds = next(r for r in results if r["key"] == "deepseek")
     assert ds["data"] == {"x": 1}
@@ -181,6 +205,7 @@ def test_load_cache_silent_on_corrupt_json(monkeypatch, tmp_path):
     scheduler._last_refresh_ts = 0.0
     scheduler._load_cache_from_disk()
     assert scheduler._results == []
+    assert scheduler._last_refresh_ts == 0.0
 
 
 # ---------- 并发拉取 ----------

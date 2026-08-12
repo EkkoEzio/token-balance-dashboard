@@ -100,6 +100,7 @@ def get_all() -> list:
 def refresh_one(key: str) -> dict | None:
     """只刷新单个 provider,更新该家在缓存中的结果并落盘,返回新结果。
     用于卡片单独刷新(不影响其他家,不触发全量请求,避免风控)。"""
+    global _last_refresh_ts
     _init_providers()
     p = _providers.get(key)
     if not p:
@@ -113,6 +114,8 @@ def refresh_one(key: str) -> dict | None:
                 break
         else:
             _results.append(result)
+        # 单卡刷新也推进全局时间戳,保持 /api/usage.last_refresh 与前端一致
+        _last_refresh_ts = time.time()
     _persist()
     # 单家刷新也走告警判定(通知)
     _check_and_notify(list(_results))
@@ -280,30 +283,38 @@ def _persist():
 def _loop():
     """后台循环:每 REFRESH_INTERVAL 秒并发刷新全部 provider,并落盘。"""
     while True:
-        time.sleep(REFRESH_INTERVAL)
-        _init_providers()  # 配置可能运行时变化(开关 provider)
-        fresh = _fetch_all_concurrent()
-        with _results_lock:
-            global _results, _last_refresh_ts
-            _results = fresh
-            _last_refresh_ts = time.time()
-        _persist()
-        _check_and_notify(fresh)
+        global _results, _last_refresh_ts
+        try:
+            # 单次循环异常不杀死兜底线程
+            time.sleep(REFRESH_INTERVAL)
+            _init_providers()  # 配置可能运行时变化(开关 provider)
+            fresh = _fetch_all_concurrent()
+            with _results_lock:
+                _results = fresh
+                _last_refresh_ts = time.time()
+            _persist()
+            _check_and_notify(fresh)
+        except Exception:
+            pass
 
 
 def _startup_refresh():
     """启动后台并发刷新(不阻塞 start())。拉完更新缓存+落盘,并抑制历史告警通知。
     逻辑等价于旧 refresh_now(notify=False),但被放进后台线程异步执行。"""
-    _init_providers()
     global _results, _last_refresh_ts, _last_notified
-    fresh = _fetch_all_concurrent()
-    with _results_lock:
-        _results = fresh
-        _last_refresh_ts = time.time()
-    _persist()
-    # 启动:把当前告警指纹计入已通知集合,后续只在"新增"时弹
     try:
-        _last_notified = {f"{a['key']}:{a['window']}" for a in evaluate_alerts(fresh)}
+        # 启动刷新失败不影响服务（磁盘缓存仍可用，_loop 兜底）
+        _init_providers()
+        fresh = _fetch_all_concurrent()
+        with _results_lock:
+            _results = fresh
+            _last_refresh_ts = time.time()
+        _persist()
+        # 启动:把当前告警指纹计入已通知集合,后续只在"新增"时弹
+        try:
+            _last_notified = {f"{a['key']}:{a['window']}" for a in evaluate_alerts(fresh)}
+        except Exception:
+            pass
     except Exception:
         pass
 
