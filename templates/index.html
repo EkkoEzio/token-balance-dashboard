@@ -268,6 +268,18 @@
           </div>
         </div>
       </template>
+      <!-- MiniMax:key + 可选 cookie(精确套餐名) -->
+      <template x-if="prov.key==='minimax'">
+        <div>
+          <input class="key-input" type="password" placeholder="sk-cp-...(Subscription Key)" x-model="keyInputs['minimax']">
+          <input class="key-input" type="password" placeholder="cookie 可选(填了显示精确套餐名)" x-model="keyInputs['minimax_cookie']" style="margin-top:6px">
+          <div class="key-actions">
+            <button class="btn mini" @click="saveMiniMax()">保存</button>
+            <span class="ok-msg" x-show="savedMsg['minimax']" x-text="savedMsg['minimax']"></span>
+          </div>
+          <p class="hint" style="margin:4px 0 0">不填 cookie 时按加速倍率推断等级(极速版)。</p>
+        </div>
+      </template>
       <!-- 千问:sec_token + cookie(特殊双字段) -->
       <template x-if="prov.key==='qianwen'">
         <div>
@@ -357,7 +369,7 @@ function board(){
       {key:'zhipu',name:'智谱 Coding Plan',needsKey:true,placeholder:'xxx.yyy'},
       {key:'tavly',name:'Tavly',needsKey:true,placeholder:'tvly-...'},
       {key:'qianwen',name:'千问 Token Plan',needsKey:'qianwen'},
-      {key:'minimax',name:'MiniMax Token Plan',needsKey:true,placeholder:'sk-cp-...(Subscription Key)'},
+      {key:'minimax',name:'MiniMax Token Plan',needsKey:'minimax'},
     ],
     async init(){
       await this.loadConfig();
@@ -501,6 +513,18 @@ function board(){
       const r=await fetch('/api/config/api-key',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({provider:p,key:combined})});
       const d=await r.json();if(d.ok){this.keyInputs[p]='';this.keyInputs2[p]='';this.flashSaved(p);await this.refresh();}
+    },
+    async saveMiniMax(){
+      // MiniMax:key 必填,cookie 可选
+      const k=(this.keyInputs['minimax']||'').trim();
+      const ck=(this.keyInputs['minimax_cookie']||'').trim();
+      if(!k){this.savedMsg['minimax']='Subscription Key 必填';setTimeout(()=>this.savedMsg['minimax']='',1500);return;}
+      await fetch('/api/config/api-key',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({provider:'minimax',key:k})});
+      await fetch('/api/config/api-key',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({provider:'minimax_cookie',key:ck})});
+      this.keyInputs['minimax']='';this.keyInputs['minimax_cookie']='';
+      this.flashSaved('minimax');await this.refresh();
     },
     async saveQianwen(){
       // 千问:sec_token + cookie 分两次存
