@@ -91,9 +91,8 @@ def refresh_now(notify: bool = True) -> list:
 
 
 def get_all() -> list:
-    """返回缓存的最新结果。首次调用会触发一次 refresh。"""
-    if not _results:
-        refresh_now()
+    """返回缓存的最新结果(快照)。
+    不再在空时触发 refresh —— start() 已在后台异步拉取,首次访问可读到磁盘缓存。"""
     with _results_lock:
         return list(_results)
 
@@ -292,12 +291,32 @@ def _loop():
         _check_and_notify(fresh)
 
 
+def _startup_refresh():
+    """启动后台并发刷新(不阻塞 start())。拉完更新缓存+落盘,并抑制历史告警通知。
+    逻辑等价于旧 refresh_now(notify=False),但被放进后台线程异步执行。"""
+    _init_providers()
+    global _results, _last_refresh_ts, _last_notified
+    fresh = _fetch_all_concurrent()
+    with _results_lock:
+        _results = fresh
+        _last_refresh_ts = time.time()
+    _persist()
+    # 启动:把当前告警指纹计入已通知集合,后续只在"新增"时弹
+    try:
+        _last_notified = {f"{a['key']}:{a['window']}" for a in evaluate_alerts(fresh)}
+    except Exception:
+        pass
+
+
 def start():
-    """启动后台拉取线程(仅一次)。"""
+    """启动后台拉取线程(仅一次)。
+    流程:同步读磁盘缓存 → 启动 10 分钟兜底循环 → 启动一次性的启动并发刷新。
+    读盘同步完成,保证首次 /api/usage 即可拿到磁盘数据(不等网络)。"""
     global _started
     if _started:
         return
     _started = True
-    refresh_now(notify=False)  # 启动即拉一次,但不弹历史告警通知
-    t = threading.Thread(target=_loop, daemon=True)
-    t.start()
+    _init_providers()
+    _load_cache_from_disk()
+    threading.Thread(target=_loop, daemon=True).start()
+    threading.Thread(target=_startup_refresh, daemon=True).start()

@@ -2,11 +2,16 @@ import scheduler
 
 
 def test_get_all_returns_active_providers(monkeypatch):
-    """默认所有 provider 都返回。"""
+    """默认所有 provider 都返回(get_all 不再隐式 refresh,需显式 refresh_now)。"""
     scheduler._providers = {}
     scheduler._results = []
     monkeypatch.setattr(scheduler.config, "get_disabled", lambda: set())
-    scheduler._init_providers()
+    # stub 所有 fetch,不打网络
+    for cls in scheduler._ALL_CLASSES:
+        monkeypatch.setattr(cls, "fetch",
+                            lambda self: {"key": self.key, "name": self.name,
+                                          "status": "ok", "data": {}, "updated_at": "t"})
+    scheduler.refresh_now()
     results = scheduler.get_all()
     keys = {r["key"] for r in results}
     assert keys == {"deepseek", "zhipu", "tavly", "qianwen", "minimax"}
@@ -273,3 +278,57 @@ def test_refresh_one_persists_to_disk(monkeypatch, tmp_path):
     data = json.loads(cache_file.read_text(encoding="utf-8"))
     ds = next(r for r in data["results"] if r["key"] == "deepseek")
     assert ds["data"] == {"new": True}
+
+
+def test_get_all_does_not_trigger_refresh(monkeypatch):
+    """get_all 在 _results 为空时直接返回 [],不再隐式触发 refresh_now。"""
+    import scheduler
+    scheduler._results = []
+    scheduler._last_refresh_ts = 0.0
+    called = {"n": 0}
+    def _boom(*a, **kw):
+        called["n"] += 1
+        raise AssertionError("refresh_now 不应被 get_all 触发")
+    monkeypatch.setattr(scheduler, "refresh_now", _boom)
+    result = scheduler.get_all()
+    assert result == []
+    assert called["n"] == 0
+
+
+def test_get_all_returns_disk_cache_after_load(monkeypatch, tmp_path):
+    """_load_cache_from_disk 之后,get_all 直接返回磁盘数据(不等后台)。"""
+    import scheduler
+    import config
+    import json
+    (tmp_path / "cache.json").write_text(json.dumps({
+        "results": [{"key": "x", "status": "ok", "data": {}, "updated_at": "t"}],
+        "last_refresh": 5.0,
+    }), encoding="utf-8")
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    scheduler._results = []
+    scheduler._last_refresh_ts = 0.0
+    scheduler._load_cache_from_disk()
+    # get_all 不该再触发 refresh,这里 _results 已有数据
+    result = scheduler.get_all()
+    assert len(result) == 1
+    assert result[0]["key"] == "x"
+
+
+def test_startup_refresh_runs_in_background(monkeypatch, tmp_path):
+    """_startup_refresh 并发拉取并更新内存 + 落盘 + 抑制告警指纹。"""
+    import scheduler
+    import config
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    scheduler._providers = {}
+    scheduler._results = []
+    scheduler._last_refresh_ts = 0.0
+    scheduler._last_notified = set()
+    monkeypatch.setattr(scheduler.config, "get_disabled", lambda: set())
+    for cls in scheduler._ALL_CLASSES:
+        monkeypatch.setattr(cls, "fetch",
+                            lambda self: {"key": self.key, "name": self.name,
+                                          "status": "ok", "data": {}, "updated_at": "t"})
+    scheduler._startup_refresh()
+    assert len(scheduler._results) == 5
+    assert scheduler._last_refresh_ts > 0
+    assert (tmp_path / "cache.json").exists()
