@@ -176,3 +176,49 @@ def test_load_cache_silent_on_corrupt_json(monkeypatch, tmp_path):
     scheduler._last_refresh_ts = 0.0
     scheduler._load_cache_from_disk()
     assert scheduler._results == []
+
+
+# ---------- 并发拉取 ----------
+def test_fetch_all_concurrent_preserves_order(monkeypatch):
+    """_fetch_all_concurrent 按 _ALL_CLASSES 顺序返回,即使并发完成顺序乱。"""
+    import scheduler
+    scheduler._providers = {}
+    monkeypatch.setattr(scheduler.config, "get_disabled", lambda: set())
+    scheduler._init_providers()
+    # 把每家 fetch 替换成「sleep 随机时长后返回自己的 key」,模拟并发完成顺序乱
+    import time as _t, random as _r
+    def make_fetch(name):
+        def _f(self):
+            _t.sleep(_r.uniform(0, 0.05))
+            return {"key": self.key, "name": name, "status": "ok", "data": {}, "updated_at": "t"}
+        return _f
+    for cls in scheduler._ALL_CLASSES:
+        monkeypatch.setattr(cls, "fetch", make_fetch(cls.__name__))
+    results = scheduler._fetch_all_concurrent()
+    keys = [r["key"] for r in results]
+    expected = [cls.key for cls in scheduler._ALL_CLASSES]
+    assert keys == expected
+
+
+def test_fetch_all_concurrent_isolates_failure(monkeypatch):
+    """某家 fetch 抛异常时,该家返回 error 结果,其他家不受影响。"""
+    import scheduler
+    scheduler._providers = {}
+    monkeypatch.setattr(scheduler.config, "get_disabled", lambda: set())
+    scheduler._init_providers()
+    from providers.deepseek import DeepSeekProvider
+    def boom(self):
+        raise RuntimeError("炸了")
+    # 所有五家都打桩,保持测试 hermetic(其余四家返回正常 stub,不打网络)
+    def stub_fetch(self):
+        return {"key": self.key, "name": self.name, "status": "ok",
+                "data": {}, "updated_at": "t"}
+    for cls in scheduler._ALL_CLASSES:
+        if cls is DeepSeekProvider:
+            monkeypatch.setattr(cls, "fetch", boom)
+        else:
+            monkeypatch.setattr(cls, "fetch", stub_fetch)
+    results = scheduler._fetch_all_concurrent()
+    ds = next(r for r in results if r["key"] == "deepseek")
+    assert ds["status"] == "error"  # 异常被捕获,转成 error
+    assert "炸了" in ds.get("error_detail", "")

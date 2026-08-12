@@ -48,6 +48,26 @@ def _init_providers():
         _providers[p.key] = p
 
 
+def _fetch_all_concurrent() -> list:
+    """并发拉取 _providers 中所有 provider,按 _ALL_CLASSES 顺序返回结果。
+    假设 _providers 已通过 _init_providers() 初始化。每家独立 try/except,
+    异常转成 error 结果,不影响其他家。"""
+    # 按 _ALL_CLASSES 的定义顺序取(展示顺序稳定)
+    ordered_keys = [cls.key for cls in _ALL_CLASSES if cls.key in _providers]
+    providers_in_order = [_providers[k] for k in ordered_keys]
+
+    def _safe_fetch(p):
+        try:
+            return p.fetch()
+        except Exception as e:
+            return p.error(str(e), "unknown")
+
+    # ThreadPoolExecutor.map 保证返回顺序与输入顺序一致
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        fetched = list(ex.map(_safe_fetch, providers_in_order))
+    return fetched
+
+
 def refresh_now(notify: bool = True) -> list:
     """立刻拉取所有 provider,返回最新结果。记录刷新时间戳。
     notify=True 时触发告警判定/桌面通知;启动时传 False 避免弹历史告警。"""
