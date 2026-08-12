@@ -115,6 +115,18 @@ def _fetch_one(key: str) -> dict:
     raise last_err or Exception("所有 IP 均失败")
 
 
+def _next_month_first_iso() -> str:
+    """Tavly 每月 1 号重置。返回下个月 1 号 00:00 的 ISO 时间。"""
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    # 下个月 1 号:本月 1 号 + 1 个月
+    if now.month == 12:
+        next_first = datetime(now.year + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        next_first = datetime(now.year, now.month + 1, 1, tzinfo=timezone.utc)
+    return next_first.isoformat()
+
+
 def parse_usage(raw: dict) -> dict:
     """把 /usage 响应解析成单个账号的展示数据。
     remaining = limit - usage(limit 为 null 视为无限)。"""
@@ -128,6 +140,7 @@ def parse_usage(raw: dict) -> dict:
         "total": plan_limit,  # None = 无限
         "remaining": remaining,
         "reset_note": "每月1号重置",
+        "reset_at": _next_month_first_iso(),  # 下个月1号倒计时
     }
 
 

@@ -200,8 +200,8 @@
                 <div class="bar-fill" :class="tavlyBarClass(acc)" :style="'width:' + pctRaw(acc.used,acc.total) + '%'"></div>
               </div>
               <div class="reset">
-                <span x-text="acc.remaining===null ? acc.reset_note : (acc.total ? pctRaw(acc.used,acc.total)+'% · 剩余 '+(100-pctRaw(acc.used,acc.total))+'%' : '')"></span>
-                <span class="reset-right" x-show="acc.remaining!==null && acc.reset_note==='每月1号重置'" x-text="acc.reset_note"></span>
+                <span x-text="acc.remaining===null ? '' : (acc.total ? pctRaw(acc.used,acc.total)+'% · 剩余 '+(100-pctRaw(acc.used,acc.total))+'%' : '')"></span>
+                <span class="reset-right" x-show="acc.reset_at" x-text="countdown(acc.reset_at) + '后重置'"></span>
               </div>
             </div>
           </template>
