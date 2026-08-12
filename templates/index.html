@@ -169,12 +169,12 @@
             <div class="window">
               <div class="window-label">
                 <span x-text="w.label + '窗口'"></span>
-                <span x-text="w.unlimited ? '无限' : (w.used + ' / ' + w.total + ' ' + (w.unit||'积分'))"></span>
+                <span x-text="w.unlimited ? '无限' : (w.total ? (w.used + ' / ' + w.total + ' ' + (w.unit||'积分')) : ('已用 ' + w.percentage + '%'))"></span>
               </div>
               <div class="bar">
-                <div class="bar-fill" :class="w.unlimited ? 'ok' : barClass(w)" :style="'width:' + (w.unlimited ? 100 : pct(w)) + '%'"></div>
+                <div class="bar-fill" :class="w.unlimited ? 'ok' : barClass(w)" :style="'width:' + (w.unlimited ? 100 : dispPct(w)) + '%'"></div>
               </div>
-              <div class="reset" x-text="w.unlimited ? ('无限额度' + (w.note ? ' · ' + w.note : '')) : (pct(w) + '% · 剩余 ' + (100-pct(w)) + '% · ' + countdown(w.reset_at) + '后重置')"></div>
+              <div class="reset" x-text="w.unlimited ? ('无限额度' + (w.note ? ' · ' + w.note : '')) : (dispPct(w) + '% · 剩余 ' + (100-dispPct(w)) + '% · ' + countdown(w.reset_at) + '后重置')"></div>
             </div>
           </template>
           <div class="status">
@@ -478,8 +478,9 @@ function board(){
     },
     agoFull(iso){this.tick;if(!iso)return'';const d=new Date(iso);const hh=String(d.getHours()).padStart(2,'0'),mm=String(d.getMinutes()).padStart(2,'0');const s=Math.floor((Date.now()-d)/1000);const rel=s<60?'刚刚':Math.floor(s/60)+'分钟前';return rel+' ('+hh+':'+mm+')'},
     pct(w){this.tick;return w.total?Math.round((w.used/w.total)*100):0},
+    dispPct(w){this.tick;return w.total?this.pct(w):(w.percentage||0)},
     pctRaw(used,total){return total?Math.round((used/total)*100):0},
-    barClass(w){this.tick;const p=this.pct(w);return p>=90?'empty':p>=70?'warn':'ok'},
+    barClass(w){this.tick;const p=this.dispPct(w);return p>=90?'empty':p>=70?'warn':'ok'},
     tavlyBarClass(acc){this.tick;const p=this.pctRaw(acc.used,acc.total);return p>=90?'empty':p>=70?'warn':'ok'},
     countdown(iso){this.tick;if(!iso)return'未知';const ms=new Date(iso)-new Date();if(ms<=0)return'已重置';
       const h=Math.floor(ms/36e5),m=Math.floor(ms%36e5/6e4);

@@ -1,61 +1,62 @@
 from providers.minimax import parse_remains, MiniMaxProvider
 
 
-# 旧版字段(count 值有效)
-OLD_VERSION = {
-    "data": {
-        "current_interval_total_count": 1500,
-        "current_interval_usage_count": 600,
-        "current_interval_reset_time": 1786886760,
-        "current_weekly_total_count": 15000,
-        "current_weekly_usage_count": 3000,
-        "current_weekly_reset_time": 1787491560,
-    }
+# 真实结构:model_remains 数组,general + video
+SAMPLE = {
+    "model_remains": [
+        {
+            "start_time": 1786518000000, "end_time": 1786536000000,
+            "current_interval_total_count": 0, "current_interval_usage_count": 0,
+            "model_name": "general",
+            "current_weekly_total_count": 0, "current_weekly_usage_count": 0,
+            "weekly_start_time": 1786291200000, "weekly_end_time": 1786896000000,
+            "current_interval_remaining_percent": 99,
+            "current_weekly_remaining_percent": 98,
+        },
+        {
+            "model_name": "video",
+            "current_interval_total_count": 3, "current_interval_remaining_percent": 100,
+            "current_weekly_remaining_percent": 100,
+        },
+    ],
+    "base_resp": {"status_code": 0, "status_msg": ""},
 }
 
-# 新版字段(count 恒为0,用 remaining_percent)
-NEW_VERSION = {
-    "data": {
-        "current_interval_remaining_percent": 60.0,
-        "current_interval_reset_time": 1786886760,
-        "current_weekly_remaining_percent": 80.0,
-        "current_weekly_reset_time": 1787491560,
-    }
-}
 
-
-def test_parse_old_version():
-    """旧版:用 count,total/used/remaining 都有绝对值。"""
-    d = parse_remains(OLD_VERSION)
+def test_parse_general_model():
+    """取 general 模型,5h 和周两个窗口(百分比制)。"""
+    d = parse_remains(SAMPLE)
     assert len(d["windows"]) == 2
     w5 = d["windows"][0]
     assert w5["label"] == "5小时"
-    assert w5["total"] == 1500
-    assert w5["used"] == 600
-    assert w5["remaining"] == 900
-    assert w5["unit"] == "次"
+    assert w5["percentage"] == 1.0  # 100 - 99 = 已用1%
+    assert w5["remaining"] == 99
+    assert w5["unit"] == "%"  # count 为0,用百分比
     assert w5["reset_at"].startswith("2026-")
     ww = d["windows"][1]
-    assert ww["total"] == 15000
-    assert ww["remaining"] == 12000
+    assert ww["label"] == "7天"
+    assert ww["percentage"] == 2.0  # 100 - 98
+    assert ww["remaining"] == 98
 
 
-def test_parse_new_version():
-    """新版:count 为0,用 remaining_percent 反推百分比。"""
-    d = parse_remains(NEW_VERSION)
-    assert len(d["windows"]) == 2
-    w5 = d["windows"][0]
-    assert w5["total"] == 0  # 无绝对值
-    assert w5["percentage"] == 40.0  # 100 - 60
-    assert w5["unit"] == "%"
-    ww = d["windows"][1]
-    assert ww["percentage"] == 20.0  # 100 - 80
+def test_parse_has_video_flag():
+    """有 video 模型时 has_video=True。"""
+    d = parse_remains(SAMPLE)
+    assert d["has_video"] is True
+
+
+def test_parse_no_video():
+    """只有 general 时 has_video=False。"""
+    d = parse_remains({"model_remains": [{"model_name": "general",
+        "current_interval_remaining_percent": 50, "current_weekly_remaining_percent": 50,
+        "end_time": 1786536000000, "weekly_end_time": 1786896000000}]})
+    assert d["has_video"] is False
 
 
 def test_parse_empty():
     d = parse_remains({})
     assert d["windows"] == []
-    assert d["level"] == ""
+    assert d["has_video"] is False
 
 
 def test_fetch_unconfigured(monkeypatch):
@@ -72,7 +73,6 @@ def test_fetch_401_is_auth(monkeypatch):
 
     class FakeResp:
         status_code = 401
-        text = "unauthorized"
         def raise_for_status(self): pass
         def json(self): return {}
 
@@ -89,7 +89,7 @@ def test_fetch_success(monkeypatch):
 
     class FakeResp:
         status_code = 200
-        def json(self): return OLD_VERSION
+        def json(self): return SAMPLE
         def raise_for_status(self): pass
 
     captured = {}
