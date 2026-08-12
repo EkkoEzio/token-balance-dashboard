@@ -18,10 +18,38 @@ def test_parse_balance_basic():
 
 
 def test_parse_balance_missing_infos():
+    """is_available=false 且 balance_infos 为空:真实余额不足,返回零值(合法)。"""
     from providers.deepseek import parse_balance
     d = parse_balance({"is_available": False, "balance_infos": []})
     assert d["is_available"] is False
     assert d["total_balance"] == "0"
+
+
+def test_parse_balance_infos_empty_raises():
+    """is_available=true 但 balance_infos 为空:API 异常,禁止静默归零(防止误报余额不足)。"""
+    from providers.deepseek import parse_balance
+    import pytest
+    with pytest.raises(ValueError):
+        parse_balance({"is_available": True, "balance_infos": []})
+    with pytest.raises(ValueError):
+        parse_balance({"is_available": True})  # 键缺失同样视为异常
+
+
+def test_parse_balance_multi_currency_prefers_cny():
+    """多币种时优先取 CNY:USD 0 排在前也不误显示。"""
+    from providers.deepseek import parse_balance
+    raw = {
+        "is_available": True,
+        "balance_infos": [
+            {"currency": "USD", "total_balance": "0.00",
+             "granted_balance": "0.00", "topped_up_balance": "0.00"},
+            {"currency": "CNY", "total_balance": "10.00",
+             "granted_balance": "0.00", "topped_up_balance": "10.00"},
+        ],
+    }
+    d = parse_balance(raw)
+    assert d["currency"] == "CNY"
+    assert d["total_balance"] == "10.00"
 
 
 def test_fetch_unconfigured_without_key(monkeypatch):
