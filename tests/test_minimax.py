@@ -59,24 +59,6 @@ def test_parse_empty():
     assert d["has_video"] is False
 
 
-def test_boost_permille_captured():
-    """general 的 weekly_boost_permille 被保留(极速版推断用)。"""
-    d = parse_remains(SAMPLE)  # SAMPLE 的 general 无 boost 字段 → 默认1000
-    assert d["boost_permille"] == 1000
-    d2 = parse_remains({"model_remains": [{"model_name": "general",
-        "weekly_boost_permille": 1500,
-        "current_interval_remaining_percent": 99, "current_weekly_remaining_percent": 98}]})
-    assert d2["boost_permille"] == 1500
-
-
-def test_infer_level():
-    """boost≥1500 → 极速版;否则空。"""
-    p = MiniMaxProvider()
-    assert p._infer_level({"boost_permille": 1500}) == "极速版"
-    assert p._infer_level({"boost_permille": 1000}) == ""
-    assert p._infer_level({}) == ""
-
-
 def test_fetch_unconfigured(monkeypatch):
     import providers.minimax as mm
     monkeypatch.setattr(mm.config, "get_api_keys", lambda: {})

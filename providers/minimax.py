@@ -66,14 +66,11 @@ def parse_remains(raw: dict) -> dict:
 
     # 是否有 video 模型(额外提示)
     has_video = any(m.get("model_name") == "video" for m in models)
-    # 极速版标志:weekly_boost_permille ≥1500 = 1.5x 加速(极速版)
-    boost = general.get("weekly_boost_permille", 1000) if general else 1000
 
     return {
         "level": "",  # 由 provider 层填(接口本身不返回套餐名)
         "windows": windows,
         "has_video": has_video,
-        "boost_permille": boost,
     }
 
 
@@ -130,18 +127,8 @@ class MiniMaxProvider(Provider):
             resp.raise_for_status()
             data = parse_remains(resp.json())
 
-            # 等级:优先 cookie 接口,失败回退 boost 推断
-            level = self._fetch_plan_level(self._get_cookie())
-            if not level:
-                level = self._infer_level(data)
-            data["level"] = level
+            # 等级:仅从 cookie 接口精确获取(remains 接口无套餐名,boost 推断不可靠)
+            data["level"] = self._fetch_plan_level(self._get_cookie())
             return self._wrap(STATUS_OK, data)
         except Exception as e:
             return self.error(str(e), kind=classify_request_exc(e))
-
-    def _infer_level(self, data: dict) -> str:
-        """从 boost_permille 推断等级:≥1500 = 极速版(1.5x 加速)。"""
-        boost = data.get("boost_permille", 1000)
-        if boost >= 1500:
-            return "极速版"
-        return ""  # 标准版无明确标志,留空
