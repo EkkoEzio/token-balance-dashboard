@@ -222,3 +222,54 @@ def test_fetch_all_concurrent_isolates_failure(monkeypatch):
     ds = next(r for r in results if r["key"] == "deepseek")
     assert ds["status"] == "error"  # 异常被捕获,转成 error
     assert "炸了" in ds.get("error_detail", "")
+
+
+def test_refresh_now_persists_to_disk(monkeypatch, tmp_path):
+    """refresh_now 成功后 cache.json 被写入。"""
+    import scheduler
+    import config
+    import json
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    scheduler._providers = {}
+    scheduler._results = []
+    scheduler._last_refresh_ts = 0.0
+    monkeypatch.setattr(scheduler.config, "get_disabled", lambda: set())
+    # stub 所有 fetch,不打网络
+    for cls in scheduler._ALL_CLASSES:
+        monkeypatch.setattr(cls, "fetch",
+                            lambda self: {"key": self.key, "name": self.name,
+                                          "status": "ok", "data": {}, "updated_at": "t"})
+    scheduler.refresh_now()
+    cache_file = tmp_path / "cache.json"
+    assert cache_file.exists()
+    data = json.loads(cache_file.read_text(encoding="utf-8"))
+    assert data["last_refresh"] > 0
+    assert len(data["results"]) == 5
+
+
+def test_refresh_one_persists_to_disk(monkeypatch, tmp_path):
+    """refresh_one 单家刷新后,该家结果在磁盘上更新。"""
+    import scheduler
+    import config
+    import json
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    # 预置一份磁盘缓存
+    cache_file = tmp_path / "cache.json"
+    cache_file.write_text(json.dumps({
+        "results": [{"key": "deepseek", "status": "ok", "data": {"old": True}, "updated_at": "old"}],
+        "last_refresh": 1.0,
+    }), encoding="utf-8")
+    scheduler._results = []
+    scheduler._last_refresh_ts = 0.0
+    scheduler._load_cache_from_disk()
+    scheduler._providers = {}
+    monkeypatch.setattr(scheduler.config, "get_disabled", lambda: set())
+    scheduler._init_providers()
+    from providers.deepseek import DeepSeekProvider
+    monkeypatch.setattr(DeepSeekProvider, "fetch",
+                        lambda self: {"key": "deepseek", "name": "DeepSeek",
+                                      "status": "ok", "data": {"new": True}, "updated_at": "new"})
+    scheduler.refresh_one("deepseek")
+    data = json.loads(cache_file.read_text(encoding="utf-8"))
+    ds = next(r for r in data["results"] if r["key"] == "deepseek")
+    assert ds["data"] == {"new": True}

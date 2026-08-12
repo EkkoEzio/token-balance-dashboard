@@ -69,14 +69,15 @@ def _fetch_all_concurrent() -> list:
 
 
 def refresh_now(notify: bool = True) -> list:
-    """立刻拉取所有 provider,返回最新结果。记录刷新时间戳。
+    """立刻并发拉取所有 provider,返回最新结果。记录刷新时间戳并落盘。
     notify=True 时触发告警判定/桌面通知;启动时传 False 避免弹历史告警。"""
     global _results, _last_refresh_ts
     _init_providers()
-    fresh = [p.fetch() for p in _providers.values()]
+    fresh = _fetch_all_concurrent()
     with _results_lock:
         _results = fresh
         _last_refresh_ts = time.time()
+    _persist()
     if notify:
         _check_and_notify(fresh)
     else:
@@ -98,7 +99,7 @@ def get_all() -> list:
 
 
 def refresh_one(key: str) -> dict | None:
-    """只刷新单个 provider,更新该家在缓存中的结果,返回新结果。
+    """只刷新单个 provider,更新该家在缓存中的结果并落盘,返回新结果。
     用于卡片单独刷新(不影响其他家,不触发全量请求,避免风控)。"""
     _init_providers()
     p = _providers.get(key)
@@ -113,6 +114,7 @@ def refresh_one(key: str) -> dict | None:
                 break
         else:
             _results.append(result)
+    _persist()
     # 单家刷新也走告警判定(通知)
     _check_and_notify(list(_results))
     return result
@@ -277,17 +279,16 @@ def _persist():
 
 
 def _loop():
-    """后台循环:每 REFRESH_INTERVAL 秒统一刷新全部 provider。"""
-    global _results
+    """后台循环:每 REFRESH_INTERVAL 秒并发刷新全部 provider,并落盘。"""
     while True:
         time.sleep(REFRESH_INTERVAL)
         _init_providers()  # 配置可能运行时变化(开关 provider)
-        # 只保留仍启用的 provider 的结果,再刷新
-        fresh = [p.fetch() for p in _providers.values()]
+        fresh = _fetch_all_concurrent()
         with _results_lock:
+            global _results, _last_refresh_ts
             _results = fresh
-            global _last_refresh_ts
             _last_refresh_ts = time.time()
+        _persist()
         _check_and_notify(fresh)
 
 
