@@ -7,6 +7,9 @@
 """
 import threading
 import time
+import json
+import os
+from concurrent.futures import ThreadPoolExecutor
 
 from providers.deepseek import DeepSeekProvider
 from providers.zhipu import ZhipuProvider
@@ -27,6 +30,7 @@ _results: list = []
 _last_refresh_ts: float = 0.0
 _results_lock = threading.Lock()
 _started = False
+_persist_lock = threading.Lock()  # 串行化磁盘写(与 _results_lock 独立)
 
 # 告警通知去重:记录上次已通知的告警指纹集合,只在新增时弹通知
 _last_notified: set = set()
@@ -214,6 +218,42 @@ def _send_notification(title: str, msg: str, level: str):
         )
     except Exception:
         pass
+
+
+def _load_cache_from_disk():
+    """启动时从 data/cache.json 读上次结果。文件不存在/损坏时静默跳过。
+    在 start() 中、任何后台线程启动前同步调用 —— 保证首次 /api/usage 即可拿到磁盘数据。"""
+    global _results, _last_refresh_ts
+    path = config.DATA_DIR / "cache.json"
+    if not path.exists():
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        results = data.get("results", [])
+        last_refresh = float(data.get("last_refresh", 0.0))
+        if isinstance(results, list):
+            with _results_lock:
+                _results = results
+                _last_refresh_ts = last_refresh
+    except Exception:
+        # 损坏文件:静默丢弃,等后台刷新
+        pass
+
+
+def _persist():
+    """把当前 _results + _last_refresh_ts 原子写入 data/cache.json。
+    锁内取快照、锁外写盘;_persist_lock 串行化多次写,防互相截断。失败静默。"""
+    path = config.DATA_DIR / "cache.json"
+    with _results_lock:
+        snapshot = {"results": list(_results), "last_refresh": _last_refresh_ts}
+    with _persist_lock:
+        tmp = path.with_suffix(".json.tmp")
+        try:
+            tmp.write_text(json.dumps(snapshot, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, path)
+        except Exception:
+            # 写盘失败不影响内存与请求,下次再试
+            pass
 
 
 def _loop():

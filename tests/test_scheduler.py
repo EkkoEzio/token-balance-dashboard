@@ -117,3 +117,62 @@ def test_alert_ignores_error_status(monkeypatch):
                         lambda: {"enabled": True, "threshold_pct": 20, "threshold_balance": 10})
     results = [{"key": "zhipu", "name": "智谱", "status": "expired", "data": {}, "updated_at": "t"}]
     assert scheduler.evaluate_alerts(results) == []
+
+
+def test_persist_writes_cache_file(monkeypatch, tmp_path):
+    """_persist 把 _results + _last_refresh_ts 写入 cache.json。"""
+    import scheduler
+    import config
+    cache_file = tmp_path / "cache.json"
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    scheduler._results = [{"key": "deepseek", "name": "DeepSeek",
+                           "status": "ok", "data": {"x": 1}, "updated_at": "t"}]
+    scheduler._last_refresh_ts = 12345.6
+    scheduler._persist()
+    import json
+    data = json.loads(cache_file.read_text(encoding="utf-8"))
+    assert data["last_refresh"] == 12345.6
+    assert data["results"][0]["key"] == "deepseek"
+
+
+def test_load_cache_from_disk_fills_results(monkeypatch, tmp_path):
+    """_load_cache_from_disk 把磁盘数据填到 _results / _last_refresh_ts。"""
+    import scheduler
+    import config
+    import json
+    cache_file = tmp_path / "cache.json"
+    cache_file.write_text(json.dumps({
+        "results": [{"key": "zhipu", "status": "ok", "data": {}, "updated_at": "t"}],
+        "last_refresh": 999.0,
+    }), encoding="utf-8")
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    scheduler._results = []
+    scheduler._last_refresh_ts = 0.0
+    scheduler._load_cache_from_disk()
+    assert len(scheduler._results) == 1
+    assert scheduler._results[0]["key"] == "zhipu"
+    assert scheduler._last_refresh_ts == 999.0
+
+
+def test_load_cache_silent_on_missing_file(monkeypatch, tmp_path):
+    """文件不存在时不报错,保持 _results 为空。"""
+    import scheduler
+    import config
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    scheduler._results = []
+    scheduler._last_refresh_ts = 0.0
+    scheduler._load_cache_from_disk()  # 不应抛异常
+    assert scheduler._results == []
+    assert scheduler._last_refresh_ts == 0.0
+
+
+def test_load_cache_silent_on_corrupt_json(monkeypatch, tmp_path):
+    """JSON 损坏时不报错,保持 _results 为空。"""
+    import scheduler
+    import config
+    (tmp_path / "cache.json").write_text("{不是合法json", encoding="utf-8")
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    scheduler._results = []
+    scheduler._last_refresh_ts = 0.0
+    scheduler._load_cache_from_disk()
+    assert scheduler._results == []
