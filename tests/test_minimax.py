@@ -12,6 +12,7 @@ SAMPLE = {
             "weekly_start_time": 1786291200000, "weekly_end_time": 1786896000000,
             "current_interval_remaining_percent": 99,
             "current_weekly_remaining_percent": 98,
+            "weekly_boost_permille": 1500,
         },
         {
             "model_name": "video",
@@ -23,20 +24,32 @@ SAMPLE = {
 }
 
 
-def test_parse_general_model():
-    """取 general 模型,5h 和周两个窗口(百分比制)。"""
+def test_parse_general_model_with_boost():
+    """取 general 模型,周窗口含 boost 加成(1500 → 总额150%)。"""
     d = parse_remains(SAMPLE)
     assert len(d["windows"]) == 2
     w5 = d["windows"][0]
     assert w5["label"] == "5小时"
+    assert w5["total"] == 100
     assert w5["percentage"] == 1.0  # 100 - 99 = 已用1%
     assert w5["remaining"] == 99
-    assert w5["unit"] == "%"  # count 为0,用百分比
-    assert w5["reset_at"].startswith("2026-")
     ww = d["windows"][1]
     assert ww["label"] == "7天"
-    assert ww["percentage"] == 2.0  # 100 - 98
-    assert ww["remaining"] == 98
+    assert ww["total"] == 150  # 100 + 50 boost
+    assert ww["percentage"] == 2.0  # 100 - 98 = 已用2%
+    assert ww["remaining"] == 148  # 150 - 2
+    assert ww["unit"] == "%"
+
+
+def test_parse_no_boost():
+    """无 boost 字段(默认1000)时,周额度 = 100%。"""
+    d = parse_remains({"model_remains": [{"model_name": "general",
+        "current_interval_remaining_percent": 50, "current_weekly_remaining_percent": 50,
+        "end_time": 1786536000000, "weekly_end_time": 1786896000000}]})
+    ww = d["windows"][1]
+    assert ww["total"] == 100
+    assert ww["remaining"] == 50
+    assert ww["percentage"] == 50
 
 
 def test_parse_has_video_flag():

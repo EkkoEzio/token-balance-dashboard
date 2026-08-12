@@ -73,6 +73,24 @@ def get_disabled() -> set:
     return set(_read().get("disabled", []))
 
 
+# ---------- 卡片排序 ----------
+def get_order() -> list:
+    """返回卡片展示顺序(provider key 列表)。未配置时返回空(用默认顺序)。"""
+    return _read().get("order", [])
+
+
+def set_order(order: list) -> dict:
+    """保存卡片顺序。必须是合法 provider key 列表。"""
+    with _lock:
+        cur = _read()
+        cur["order"] = list(order)
+        try:
+            _write(cur)
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+    return {"ok": True}
+
+
 def set_disabled(provider: str, disabled: bool) -> dict:
     """设置某 provider 是否关闭。"""
     with _lock:

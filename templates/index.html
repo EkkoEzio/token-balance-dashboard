@@ -59,7 +59,8 @@
   .bar-fill.ok{background:var(--green)}
   .bar-fill.warn{background:var(--amber)}
   .bar-fill.empty{background:var(--red)}
-  .reset{font-size:11px;color:var(--muted);margin-top:3px}
+  .reset{font-size:11px;color:var(--muted);margin-top:3px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .reset-right{flex-shrink:0;text-align:right}
   .status{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin-top:8px}
   .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
   .dot.ok{background:var(--green)} .dot.err{background:var(--red)} .dot.warn{background:var(--amber)}
@@ -174,7 +175,10 @@
               <div class="bar">
                 <div class="bar-fill" :class="w.unlimited ? 'ok' : barClass(w)" :style="'width:' + (w.unlimited ? 100 : dispPct(w)) + '%'"></div>
               </div>
-              <div class="reset" x-text="w.unlimited ? ('无限额度' + (w.note ? ' · ' + w.note : '')) : (dispPct(w) + '% · 剩余 ' + (100-dispPct(w)) + '% · ' + countdown(w.reset_at) + '后重置')"></div>
+              <div class="reset">
+                <span x-text="w.unlimited ? ('无限额度' + (w.note ? ' · ' + w.note : '')) : (dispPct(w) + '% · 剩余 ' + (100-dispPct(w)) + '%')"></span>
+                <span class="reset-right" x-show="w.reset_at" x-text="countdown(w.reset_at) + '后重置'"></span>
+              </div>
             </div>
           </template>
           <div class="status">
@@ -195,7 +199,10 @@
               <div class="bar" x-show="acc.total">
                 <div class="bar-fill" :class="tavlyBarClass(acc)" :style="'width:' + pctRaw(acc.used,acc.total) + '%'"></div>
               </div>
-              <div class="reset" x-text="acc.remaining===null ? acc.reset_note : (acc.total ? pctRaw(acc.used,acc.total)+'% · 剩余 '+(100-pctRaw(acc.used,acc.total))+'% · ' : '') + acc.reset_note"></div>
+              <div class="reset">
+                <span x-text="acc.remaining===null ? acc.reset_note : (acc.total ? pctRaw(acc.used,acc.total)+'% · 剩余 '+(100-pctRaw(acc.used,acc.total))+'%' : '')"></span>
+                <span class="reset-right" x-show="acc.remaining!==null && acc.reset_note==='每月1号重置'" x-text="acc.reset_note"></span>
+              </div>
             </div>
           </template>
           <template x-if="p.data.warning==='rate_limited'">
@@ -251,10 +258,14 @@
     <div class="field prov-field">
       <div class="prov-head">
         <label x-text="prov.name"></label>
-        <label class="switch">
-          <input type="checkbox" :checked="!disabled.includes(prov.key)" @change="toggleDisable(prov.key, $event.target.checked)">
-          <span class="slider"></span>
-        </label>
+        <div style="display:flex;align-items:center;gap:4px">
+          <button class="card-refresh" @click="moveCard(prov.key,-1)" :disabled="$index===0" title="上移">↑</button>
+          <button class="card-refresh" @click="moveCard(prov.key,1)" :disabled="$index===$root.settingsProviders.length-1" title="下移">↓</button>
+          <label class="switch">
+            <input type="checkbox" :checked="!disabled.includes(prov.key)" @change="toggleDisable(prov.key, $event.target.checked)">
+            <span class="slider"></span>
+          </label>
+        </div>
       </div>
       <!-- 多key(tavly):两个输入框 -->
       <template x-if="prov.key==='tavly'">
@@ -393,6 +404,12 @@ function board(){
       const r=await fetch('/api/config');const d=await r.json();
       this.theme=d.theme;this.disabled=d.disabled||[];
       const m=await fetch('/api/config/master-password-status');this.hasMasterPw=(await m.json()).has_master_password;
+      // 应用卡片顺序(设置页顺序 = 卡片顺序)
+      const o=await fetch('/api/config/order');const od=await o.json();
+      if(od.ok&&od.order&&od.order.length){
+        const rank={};od.order.forEach((k,n)=>rank[k]=n);
+        this.settingsProviders=[...this.settingsProviders].sort((a,b)=>(rank[a.key]??999)-(rank[b.key]??999));
+      }
     },
     async poll(){
       // 只读缓存,不触发后端请求(后端由10分钟定时器自动刷新)
@@ -494,7 +511,8 @@ function board(){
     barClass(w){this.tick;const p=this.dispPct(w);return p>=90?'empty':p>=70?'warn':'ok'},
     tavlyBarClass(acc){this.tick;const p=this.pctRaw(acc.used,acc.total);return p>=90?'empty':p>=70?'warn':'ok'},
     countdown(iso){this.tick;if(!iso)return'未知';const ms=new Date(iso)-new Date();if(ms<=0)return'已重置';
-      const h=Math.floor(ms/36e5),m=Math.floor(ms%36e5/6e4);
+      const d=Math.floor(ms/864e5),h=Math.floor(ms%864e5/36e5),m=Math.floor(ms%36e5/6e4);
+      if(d>0)return d+'天'+h+'小时'+m+'分';  // >24h:显示天
       return h>0?h+'小时'+m+'分':m+'分'},
     ago(iso){this.tick;if(!iso)return'';const s=Math.floor((Date.now()-new Date(iso))/1000);
       return s<60?'刚刚':Math.floor(s/60)+'分钟前'},
@@ -560,6 +578,22 @@ function board(){
       const d=await r.json();
       if(d.ok){this.hasMasterPw=true;this.masterPwInput='';this.masterPwMsg='已设置';setTimeout(()=>this.masterPwMsg='',1500);}
       else{this.masterPwMsg=d.error||'设置失败';}
+    },
+    async moveCard(key,dir){
+      // 调整卡片顺序:上移(dir=-1)或下移(dir=1)
+      const i=this.settingsProviders.findIndex(x=>x.key===key);
+      const j=i+dir;
+      if(i<0||j<0||j>=this.settingsProviders.length)return;
+      const arr=[...this.settingsProviders];
+      [arr[i],arr[j]]=[arr[j],arr[i]];
+      this.settingsProviders=arr;
+      // 保存顺序
+      const order=arr.map(x=>x.key);
+      await fetch('/api/config/order',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({order})});
+      // 前端 providers 也按新顺序排
+      const rank={};order.forEach((k,n)=>rank[k]=n);
+      this.providers=[...this.providers].sort((a,b)=>(rank[a.key]??999)-(rank[b.key]??999));
     },
     async toggleDisable(p,checked){
       // checked=true 表示启用,所以 disabled=!checked

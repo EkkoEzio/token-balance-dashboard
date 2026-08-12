@@ -70,31 +70,50 @@ def _fetch_all_concurrent() -> list:
 
 def refresh_now(notify: bool = True) -> list:
     """立刻并发拉取所有 provider,返回最新结果。记录刷新时间戳并落盘。
+    失败保护:某 provider 本次 fetch 失败(error)时,保留缓存的旧成功数据,
+    避免偶发网络抖动把好数据冲掉(前端显示上次成功值)。
     notify=True 时触发告警判定/桌面通知;启动时传 False 避免弹历史告警。"""
     global _results, _last_refresh_ts
     _init_providers()
     fresh = _fetch_all_concurrent()
+
+    # 失败保护:error/expired 且有旧成功数据 → 保留旧的
     with _results_lock:
-        _results = fresh
+        old_by_key = {r["key"]: r for r in _results}
+        merged = []
+        for r in fresh:
+            if r.get("status") in ("error", "expired") and r["key"] in old_by_key:
+                old = old_by_key[r["key"]]
+                # 旧数据若也是失败态,直接用新的
+                if old.get("status") not in ("error", "expired"):
+                    merged.append(old)
+                    continue
+            merged.append(r)
+        _results = merged
         _last_refresh_ts = time.time()
     _persist()
     if notify:
-        _check_and_notify(fresh)
+        _check_and_notify(_results)
     else:
         # 启动:把当前告警指纹计入已通知集合,这样后续只在"新增"时弹
         try:
             global _last_notified
-            _last_notified = {f"{a['key']}:{a['window']}" for a in evaluate_alerts(fresh)}
+            _last_notified = {f"{a['key']}:{a['window']}" for a in evaluate_alerts(_results)}
         except Exception:
             pass
-    return fresh
+    return list(_results)
 
 
 def get_all() -> list:
-    """返回缓存的最新结果(快照)。
-    不再在空时触发 refresh —— start() 已在后台异步拉取,首次访问可读到磁盘缓存。"""
+    """返回缓存的最新结果(快照),按 config 的 order 排序(未配置用默认顺序)。
+    不在空时触发 refresh —— start() 已在后台异步拉取,首次访问可读到磁盘缓存。"""
     with _results_lock:
-        return list(_results)
+        results = list(_results)
+    order = config.get_order()
+    if order:
+        rank = {k: i for i, k in enumerate(order)}
+        results.sort(key=lambda r: rank.get(r["key"], 999))
+    return results
 
 
 def refresh_one(key: str) -> dict | None:

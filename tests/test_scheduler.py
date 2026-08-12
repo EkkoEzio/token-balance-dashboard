@@ -76,6 +76,56 @@ def test_refresh_now_updates_results(monkeypatch, tmp_path):
     assert ds["data"] == {"x": 1}
 
 
+def test_refresh_keeps_old_data_on_error(monkeypatch, tmp_path):
+    """fetch 失败返回 error 时,保留缓存里的旧成功数据(不冲掉)。"""
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    scheduler._providers = {}
+    scheduler._results = [{"key": "deepseek", "name": "DeepSeek", "status": "ok",
+                           "data": {"total_balance": "10.00"}, "updated_at": "old"}]
+    monkeypatch.setattr(scheduler.config, "get_disabled", lambda: set())
+    scheduler._init_providers()
+    # 本次 fetch 全部返回 error
+    from providers.deepseek import DeepSeekProvider
+    from providers.zhipu import ZhipuProvider
+    from providers.tavly import TavlyProvider
+    from providers.qianwen import QianwenProvider
+    from providers.minimax import MiniMaxProvider
+    _err = lambda self: {"key": self.key, "name": self.name, "status": "error",
+                         "data": {}, "error": "网络错误", "updated_at": "new"}
+    for cls in (DeepSeekProvider, ZhipuProvider, TavlyProvider,
+                QianwenProvider, MiniMaxProvider):
+        monkeypatch.setattr(cls, "fetch", _err)
+    results = scheduler.refresh_now()
+    ds = next(r for r in results if r["key"] == "deepseek")
+    # 旧成功数据被保留
+    assert ds["status"] == "ok"
+    assert ds["data"]["total_balance"] == "10.00"
+    assert ds["updated_at"] == "old"
+
+
+def test_refresh_overwrites_on_real_error(monkeypatch, tmp_path):
+    """连续失败(缓存里也是 error)时,用新的 error 更新。"""
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    scheduler._providers = {}
+    scheduler._results = [{"key": "deepseek", "name": "DeepSeek", "status": "error",
+                           "data": {}, "error": "旧错误", "updated_at": "old"}]
+    monkeypatch.setattr(scheduler.config, "get_disabled", lambda: set())
+    scheduler._init_providers()
+    from providers.deepseek import DeepSeekProvider
+    from providers.zhipu import ZhipuProvider
+    from providers.tavly import TavlyProvider
+    from providers.qianwen import QianwenProvider
+    from providers.minimax import MiniMaxProvider
+    _err = lambda self: {"key": self.key, "name": self.name, "status": "error",
+                         "data": {}, "error": "新错误", "updated_at": "new"}
+    for cls in (DeepSeekProvider, ZhipuProvider, TavlyProvider,
+                QianwenProvider, MiniMaxProvider):
+        monkeypatch.setattr(cls, "fetch", _err)
+    results = scheduler.refresh_now()
+    ds = next(r for r in results if r["key"] == "deepseek")
+    assert ds["error"] == "新错误"
+
+
 # ---------- 告警判定 ----------
 def _ok(key, data):
     return {"key": key, "name": key, "status": "ok", "data": data, "updated_at": "t"}

@@ -142,6 +142,18 @@ def set_theme():
     return jsonify(config.set_theme(theme))
 
 
+@app.route("/api/config/order", methods=["GET", "POST"])
+def order():
+    """GET 返回卡片顺序;POST 保存顺序(provider key 数组)。"""
+    if request.method == "GET":
+        return jsonify({"ok": True, "order": config.get_order()})
+    body = request.get_json(force=True)
+    order_list = body.get("order", [])
+    if not isinstance(order_list, list):
+        return jsonify({"ok": False, "error": "order 需为数组"}), 400
+    return jsonify(config.set_order(order_list))
+
+
 @app.route("/api/config/disabled", methods=["POST"])
 def set_disabled():
     """设置某 provider 是否关闭。body: {provider, disabled: bool}。"""

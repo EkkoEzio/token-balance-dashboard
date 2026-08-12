@@ -35,32 +35,39 @@ def parse_remains(raw: dict) -> dict:
         # 兜底:取第一个
         general = models[0] if models else {}
 
+    # 周窗口有 boost(如 Max 1500 = 1.5x,总额度 100%+50%=150%)。
+    # remaining_percent 是「剩余/基础额度」的百分比:
+    #   剩余% = remaining_percent(相对基础),已用% = 100 - remaining_percent,总额 = 100 + boost加成
+    boost = general.get("weekly_boost_permille", 1000) if general else 1000
+    boost_extra = max(0, (boost - 1000) / 10)  # 1500 → +50
+
     windows = []
-    # 5 小时窗口
+    # 5 小时窗口(无 boost 字段,默认 100% 基础)
     remain5 = general.get("current_interval_remaining_percent")
     if remain5 is not None:
         used_pct = round(100 - remain5, 1)
         windows.append({
             "label": "5小时",
-            "total": general.get("current_interval_total_count", 0),
-            "used": general.get("current_interval_usage_count", 0),
+            "total": 100,
+            "used": used_pct,
             "remaining": max(0, remain5),
             "percentage": used_pct,
             "reset_at": _ms_to_iso(general.get("end_time")),
-            "unit": "%" if not general.get("current_interval_total_count") else "次",
+            "unit": "%",
         })
-    # 周窗口
+    # 周窗口(含 boost 加成)
     remain_w = general.get("current_weekly_remaining_percent")
     if remain_w is not None:
         used_pct = round(100 - remain_w, 1)
+        total_pct = 100 + boost_extra  # 1500 → 150
         windows.append({
             "label": "7天",
-            "total": general.get("current_weekly_total_count", 0),
-            "used": general.get("current_weekly_usage_count", 0),
-            "remaining": max(0, remain_w),
+            "total": total_pct,
+            "used": used_pct,
+            "remaining": round(total_pct - used_pct, 1),  # 150 - 2 = 148
             "percentage": used_pct,
             "reset_at": _ms_to_iso(general.get("weekly_end_time")),
-            "unit": "%" if not general.get("current_weekly_total_count") else "次",
+            "unit": "%",
         })
 
     # 是否有 video 模型(额外提示)
