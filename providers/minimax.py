@@ -10,7 +10,6 @@ import config
 from providers.base import Provider, STATUS_OK, classify_request_exc
 
 REMAINS_URL = "https://api.minimaxi.com/v1/token_plan/remains"
-PLAN_URL = "https://www.minimaxi.com/backend/account/resource_package_plan"
 
 _http_get = requests.get
 
@@ -79,37 +78,6 @@ class MiniMaxProvider(Provider):
     name = "MiniMax Token Plan"
     refresh_interval = 600
 
-    def _get_cookie(self) -> str:
-        """可选:登录 cookie(用于拿会员等级)。没填返回空串。"""
-        return config.get_api_keys().get("minimax_cookie", "").strip()
-
-    def _fetch_plan_level(self, cookie: str) -> str:
-        """从 resource_package_plan 接口拿会员等级(需登录 cookie)。
-        失败返回空串(降级为 boost 推断)。"""
-        if not cookie:
-            return ""
-        try:
-            resp = _http_get(
-                PLAN_URL,
-                headers={"Cookie": cookie,
-                         "Origin": "https://platform.minimaxi.com",
-                         "Referer": "https://platform.minimaxi.com/console/usage",
-                         "User-Agent": "Mozilla/5.0"},
-                timeout=12,
-            )
-            if resp.status_code != 200:
-                return ""
-            data = resp.json()
-            # 兼容两种可能结构:data 直接是包信息 或 data.data
-            inner = data.get("data") if isinstance(data.get("data"), dict) else data
-            # 找套餐名:常见字段 plan_name / package_name / name / plan_type
-            for f in ("plan_name", "package_name", "name", "plan_type", "product_name"):
-                if isinstance(inner, dict) and inner.get(f):
-                    return str(inner[f])
-        except Exception:
-            pass
-        return ""
-
     def fetch(self) -> dict:
         keys = config.get_api_keys()
         key = keys.get("minimax")
@@ -126,9 +94,7 @@ class MiniMaxProvider(Provider):
                 return self.error(f"HTTP {resp.status_code}: Key 无效或非 Subscription Key(需 sk-cp- 开头)", kind="auth")
             resp.raise_for_status()
             data = parse_remains(resp.json())
-
-            # 等级:仅从 cookie 接口精确获取(remains 接口无套餐名,boost 推断不可靠)
-            data["level"] = self._fetch_plan_level(self._get_cookie())
+            # 注:套餐名需登录态接口,API Key 拿不到,level 留空不显示
             return self._wrap(STATUS_OK, data)
         except Exception as e:
             return self.error(str(e), kind=classify_request_exc(e))
