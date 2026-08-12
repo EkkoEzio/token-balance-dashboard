@@ -83,6 +83,9 @@
   .tavly-num{font-size:26px;font-weight:700}
   .tavly-sub{font-size:11px;color:var(--muted);margin-top:4px}
   .prov-field{border-bottom:1px solid var(--border);padding-bottom:14px}
+  .prov-field[draggable="true"]{cursor:grab}
+  .prov-field.drag-active{opacity:.5;border:1px dashed var(--accent);border-radius:8px}
+  .drag-handle{color:var(--muted);cursor:grab;font-size:14px;letter-spacing:-2px;user-select:none}
   .prov-head{display:flex;justify-content:space-between;align-items:center}
   .key-input{width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);padding:8px 10px;border-radius:6px;font-size:13px}
   .key-actions{display:flex;align-items:center;gap:6px;margin-top:6px}
@@ -254,18 +257,24 @@
     </div>
   </div>
 
-  <template x-for="prov in settingsProviders" :key="prov.key">
-    <div class="field prov-field">
+  <!-- 排序说明 -->
+  <p class="hint" style="margin:0 0 8px">拖动 ⋮⋮ 调整卡片顺序(关闭的供应商不显示)</p>
+  <template x-for="prov in activeProviders" :key="prov.key">
+    <div class="field prov-field" draggable="true"
+         @dragstart="dragStart($event, prov.key)"
+         @dragover.prevent="dragOver($event, prov.key)"
+         @drop.prevent="dragDrop($event, prov.key)"
+         @dragend="dragEnd()"
+         :class="dragKey===prov.key?'drag-active':''">
       <div class="prov-head">
-        <label x-text="prov.name"></label>
-        <div style="display:flex;align-items:center;gap:4px">
-          <button class="card-refresh" @click="moveCard(prov.key,-1)" :disabled="$index===0" title="上移">↑</button>
-          <button class="card-refresh" @click="moveCard(prov.key,1)" :disabled="$index===$root.settingsProviders.length-1" title="下移">↓</button>
-          <label class="switch">
-            <input type="checkbox" :checked="!disabled.includes(prov.key)" @change="toggleDisable(prov.key, $event.target.checked)">
-            <span class="slider"></span>
-          </label>
+        <div style="display:flex;align-items:center;gap:6px">
+          <span class="drag-handle" title="拖拽排序">⋮⋮</span>
+          <label x-text="prov.name"></label>
         </div>
+        <label class="switch">
+          <input type="checkbox" :checked="!disabled.includes(prov.key)" @change="toggleDisable(prov.key, $event.target.checked)">
+          <span class="slider"></span>
+        </label>
       </div>
       <!-- 多key(tavly):两个输入框 -->
       <template x-if="prov.key==='tavly'">
@@ -303,7 +312,7 @@
         </div>
       </template>
       <!-- 单key(deepseek/智谱) -->
-      <template x-if="prov.key!=='tavly' && prov.key!=='qianwen' && prov.needsKey===true">
+      <template x-if="prov.key!=='tavly' && prov.key!=='qianwen' && prov.key!=='minimax' && prov.needsKey===true">
         <div>
           <input class="key-input" type="password" :placeholder="prov.placeholder||''" x-model="keyInputs[prov.key]">
           <div class="key-actions">
@@ -373,6 +382,7 @@ function board(){
     alerts:[], alertExpanded:false, alertConfig:{enabled:true,threshold_balance:10,threshold_pct:20},
     cooldownMsg:'',  // 临时提示:某 provider 刷新被 cooldown 拦截
     refreshing:{},  // 各卡片单独刷新状态 {key: bool}
+    dragKey:'',     // 当前拖拽中的 provider key
     // 设置页展示的 provider 元数据(needsKey=false 的走 Edge cookie)
     settingsProviders:[
       {key:'deepseek',name:'DeepSeek',needsKey:true,placeholder:'sk-...'},
@@ -381,6 +391,10 @@ function board(){
       {key:'qianwen',name:'千问 Token Plan',needsKey:'qianwen'},
       {key:'minimax',name:'MiniMax Token Plan',needsKey:true,placeholder:'sk-cp-...(Subscription Key)'},
     ],
+    // 设置页列表:只显示未关闭的 provider(关闭的卡片不展示)
+    get activeProviders(){
+      return this.settingsProviders.filter(p=>!this.disabled.includes(p.key));
+    },
     async init(){
       await this.loadConfig();
       await this.poll();                      // 立即读缓存 → 瞬间渲染磁盘数据(不等网络)
@@ -580,21 +594,35 @@ function board(){
       if(d.ok){this.hasMasterPw=true;this.masterPwInput='';this.masterPwMsg='已设置';setTimeout(()=>this.masterPwMsg='',1500);}
       else{this.masterPwMsg=d.error||'设置失败';}
     },
-    async moveCard(key,dir){
-      // 调整卡片顺序:上移(dir=-1)或下移(dir=1)
-      const i=this.settingsProviders.findIndex(x=>x.key===key);
-      const j=i+dir;
-      if(i<0||j<0||j>=this.settingsProviders.length)return;
+    dragStart(e,key){
+      // 开始拖拽:记录源 key
+      this.dragKey=key;
+      e.dataTransfer.effectAllowed='move';
+      e.dataTransfer.setData('text/plain',key);
+    },
+    dragOver(e,key){
+      // 拖拽经过:实时交换位置(在 activeProviders 列表内)
+      if(!this.dragKey||this.dragKey===key)return;
+      const src=this.settingsProviders.findIndex(x=>x.key===this.dragKey);
+      const dst=this.settingsProviders.findIndex(x=>x.key===key);
+      if(src<0||dst<0)return;
       const arr=[...this.settingsProviders];
-      [arr[i],arr[j]]=[arr[j],arr[i]];
+      [arr[src],arr[dst]]=[arr[dst],arr[src]];
       this.settingsProviders=arr;
-      // 保存顺序
-      const order=arr.map(x=>x.key);
+    },
+    async dragDrop(e,key){
+      // 松手:保存顺序到后端
+      e.preventDefault();
+      this.dragKey='';
+      const order=this.settingsProviders.map(x=>x.key);
       await fetch('/api/config/order',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({order})});
       // 前端 providers 也按新顺序排
       const rank={};order.forEach((k,n)=>rank[k]=n);
       this.providers=[...this.providers].sort((a,b)=>(rank[a.key]??999)-(rank[b.key]??999));
+    },
+    dragEnd(){
+      this.dragKey='';
     },
     async toggleDisable(p,checked){
       // checked=true 表示启用,所以 disabled=!checked
