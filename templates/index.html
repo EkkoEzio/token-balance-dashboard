@@ -107,7 +107,7 @@
 <div class="header">
   <div>
     <h1>Token 余额看板</h1>
-    <div class="last-update" x-show="lastRefresh"><span x-text="'上次更新 · ' + agoTs(lastRefresh)"></span><span class="next-hint" x-text="'  ·  下次自动刷新 ' + nextRefreshIn()"></span></div>
+    <div class="last-update" x-show="lastRefresh"><span x-text="'上次更新 · ' + agoTs(lastRefresh)"></span><span class="next-hint" x-text="'  ·  ' + staleHint()"></span></div>
   </div>
   <div class="toolbar">
     <button class="btn" @click="forceRefresh()" :disabled="loading"><span x-text="loading ? '刷新中…' : '刷新'"></span></button>
@@ -361,9 +361,10 @@ function board(){
     ],
     async init(){
       await this.loadConfig();
-      await this.forceRefresh();  // 首次加载拉一次
+      await this.poll();                      // 立即读缓存 → 瞬间渲染磁盘数据(不等网络)
+      this.checkStaleAndRefresh();            // mount 即检 staleness,旧则后台分卡片刷
       await this.loadAlerts();
-      setInterval(()=>this.poll(),30000);    // 30秒读缓存(不触发后端请求)
+      setInterval(()=>this.pollThenMaybeRefresh(),30000);  // 30秒轮询+staleness 复检
       setInterval(()=>{this.tick++},1000);   // 倒计时每秒tick
     },
     async loadAlerts(){
@@ -419,7 +420,62 @@ function board(){
       }catch(e){this.refreshing[key]=false;}
     },
     agoTs(ts){this.tick;if(!ts)return'';const s=Math.floor((Date.now()/1000-ts));return s<60?'刚刚':Math.floor(s/60)+'分钟前'},
-    nextRefreshIn(){this.tick;if(!this.lastRefresh)return'';const remain=600-Math.floor((Date.now()/1000-this.lastRefresh));if(remain<=0)return'即将';const m=Math.floor(remain/60),s=remain%60;return m+'分'+s+'秒后'},
+    anyRefreshing(){
+      // 是否有任意卡片正在刷新(refreshing[k]===true,'ok' 不算)
+      return Object.values(this.refreshing).some(v=>v===true);
+    },
+    checkStaleAndRefresh(){
+      // staleness 检查:lastRefresh 存在 + 超过 600s + 当前没在刷 → 触发分卡片刷新
+      if(!this.lastRefresh) return;            // 后端暂无数据,等后台并发拉
+      const ageSec=Date.now()/1000-this.lastRefresh;
+      if(ageSec<=600) return;                  // 新鲜
+      if(this.anyRefreshing()) return;         // 已在刷新中,不重复触发
+      this.refreshAllStale();
+    },
+    async refreshAllStale(){
+      // 并发刷所有可见卡片;每家独立 try/catch,末尾统一 loadAlerts 一次
+      const keys=this.providers.map(p=>p.key);
+      await Promise.all(keys.map(k=>this._refreshOneSilent(k)));
+      await this.loadAlerts();
+    },
+    async _refreshOneSilent(key){
+      // refreshOne 的静默版:不重复 loadAlerts(refreshAllStale 末尾统一调)
+      this.refreshing[key]=true;
+      try{
+        const r=await fetch('/api/refresh/'+key,{method:'POST'});
+        const d=await r.json();
+        if(d.ok&&d.result){
+          this.providers=this.providers.map(p=>p.key===key?d.result:p);
+          this.lastRefresh=Date.now()/1000;    // 后端已更新,前端同步时间戳
+          this.refreshing[key]='ok';
+          setTimeout(()=>{this.refreshing[key]=false},1200);
+        }else if(d.cooldown_remaining){
+          this.refreshing[key]=false;
+          this.cooldownMsg=`${key} 刷新太频繁,${d.cooldown_remaining} 秒后再试`;
+          setTimeout(()=>{this.cooldownMsg=''},3000);
+        }else{
+          this.refreshing[key]=false;
+        }
+      }catch(e){this.refreshing[key]=false;}
+    },
+    async pollThenMaybeRefresh(){
+      // 30 秒轮询:读缓存后顺手复检 staleness
+      await this.poll();
+      this.checkStaleAndRefresh();
+    },
+    staleHint(){
+      // 顶部时间提示:新鲜时显示「下次自动刷新 Xm Ys 后」,偏旧时显示状态文案
+      this.tick;
+      if(!this.lastRefresh) return '';
+      const ageSec=Date.now()/1000-this.lastRefresh;
+      if(ageSec<=600){
+        const remain=600-Math.floor(ageSec);
+        const m=Math.floor(remain/60),s=remain%60;
+        return '下次自动刷新 '+m+'分'+s+'秒后';
+      }
+      if(this.anyRefreshing()) return '数据偏旧,后台刷新中…';
+      return '数据偏旧';
+    },
     agoFull(iso){this.tick;if(!iso)return'';const d=new Date(iso);const hh=String(d.getHours()).padStart(2,'0'),mm=String(d.getMinutes()).padStart(2,'0');const s=Math.floor((Date.now()-d)/1000);const rel=s<60?'刚刚':Math.floor(s/60)+'分钟前';return rel+' ('+hh+':'+mm+')'},
     pct(w){this.tick;return w.total?Math.round((w.used/w.total)*100):0},
     pctRaw(used,total){return total?Math.round((used/total)*100):0},
