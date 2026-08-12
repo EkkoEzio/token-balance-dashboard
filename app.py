@@ -1,10 +1,19 @@
 """Flask 路由层。薄,业务委托给 scheduler / config。"""
+import time
 from flask import Flask, request, jsonify, render_template
 
 import config
 import scheduler
 
 app = Flask(__name__)
+
+# 限流防护:各刷新入口的冷却时间(秒)。
+# 防止用户(或多标签页)狂点刷新按钮 → 后端频繁打 Tavly → 触发 429。
+_COOLDOWN_TAVLY_ONE = 30       # Tavly 单卡刷新 30 秒冷却
+_COOLDOWN_TAVLY_ALL = 60       # 全局刷新里包含 Tavly 时 60 秒冷却(全量更重)
+_COOLDOWN_OTHER_ONE = 5        # 其他 provider 单卡刷新 5 秒冷却
+_COOLDOWN_OTHER_ALL = 10       # 全局刷新 10 秒冷却
+_last_refresh_ts: dict = {}    # {key_or_'__all__': float(monotonic)}
 
 
 @app.route("/")
@@ -22,6 +31,11 @@ def usage():
 
 @app.route("/api/refresh", methods=["POST"])
 def refresh():
+    # 全局刷新 cooldown:防止狂点触发各 provider 风控
+    cooldown = _COOLDOWN_TAVLY_ALL if _is_active("tavly") else _COOLDOWN_OTHER_ALL
+    block = _check_cooldown("__all__", cooldown)
+    if block:
+        return jsonify(block), 429
     return jsonify({
         "providers": scheduler.refresh_now(),
         "last_refresh": scheduler.last_refresh_ts(),
@@ -30,11 +44,37 @@ def refresh():
 
 @app.route("/api/refresh/<key>", methods=["POST"])
 def refresh_one(key):
-    """只刷新单个 provider(卡片单独刷新按钮)。"""
+    """只刷新单个 provider(卡片单独刷新按钮)。
+    Tavly 单独刷新 30 秒冷却(防限流);其他 provider 5 秒冷却。"""
+    cooldown = _COOLDOWN_TAVLY_ONE if key == "tavly" else _COOLDOWN_OTHER_ONE
+    block = _check_cooldown(key, cooldown)
+    if block:
+        return jsonify(block), 429
     result = scheduler.refresh_one(key)
     if result is None:
         return jsonify({"ok": False, "error": f"未知的供应商: {key}"}), 404
     return jsonify({"ok": True, "result": result})
+
+
+def _is_active(key: str) -> bool:
+    """某 provider 是否启用(未关闭)。关闭的不参与 cooldown 判断。"""
+    return key not in config.get_disabled()
+
+
+def _check_cooldown(key: str, cooldown_sec: int) -> dict | None:
+    """冷却检查。冷却期内返回 429 + 剩余秒数;否则放行并打点。
+    返回 None 表示可以继续;返回 dict 表示被 cooldown 拦截。"""
+    now = time.monotonic()
+    last = _last_refresh_ts.get(key, 0.0)
+    remain = cooldown_sec - (now - last)
+    if remain > 0:
+        return {
+            "ok": False,
+            "error": f"刷新过于频繁,请 {int(remain) + 1} 秒后再试",
+            "cooldown_remaining": int(remain) + 1,
+        }
+    _last_refresh_ts[key] = now
+    return None
 
 
 @app.route("/api/config")

@@ -3,7 +3,16 @@
 
 国内网络注意:api.tavly.com 常被 Clash 的 fake-ip 规则拦截(SSL EOF)。
 本 provider 在普通请求失败时,自动用 DoH 解析真实 IP,用 IP+Host 头走代理重试。
+
+限流防护(Tavly 文档未公开 rate limit,但实测 429 触发后会封一段时间):
+- 同一 key 60 秒内复用缓存(MIN_INTERVAL)
+- 任一 key 触发 429 后整 provider 进入 10 分钟惩罚期(PENALTY)
+- 惩罚期内 fetch 返回「上次成功数据 + 警告字段」,不打 API
+- 多 key 串行请求,key 间 sleep 2 秒避免并发撞限流
+- 启动首 fetch 故意延迟 5 秒(避开开发反复重启的密集触发)
 """
+import time
+import threading
 import requests
 import config
 from providers.base import Provider, STATUS_OK, ERROR_KINDS, classify_request_exc
@@ -127,6 +136,19 @@ class TavlyProvider(Provider):
     name = "Tavly"
     refresh_interval = 300  # 5 分钟
 
+    # 限流防护参数(类级别,所有实例共享一份状态)
+    MIN_INTERVAL = 60        # 同一 key 60 秒内复用缓存
+    PENALTY_SECONDS = 600    # 触发 429 后整 provider 冷却 10 分钟
+    KEY_INTERVAL = 2         # 多 key 串行,key 间间隔(秒)
+    STARTUP_DELAY = 5        # 启动首 fetch 延迟,避开开发反复重启
+
+    # 类级别状态(进程内单实例,无需 Lock 严格同步——fetch 失败/成功标志用原子赋值即可)
+    _cache: dict = {}              # {key: {"data": dict, "ts": float}}
+    _last_fetch_ts: float = 0.0    # 任一 key 上次实际打 API 的时间
+    _penalty_until: float = 0.0    # 惩罚期截止时间戳
+    _lock = threading.Lock()
+    _started_at: float = time.monotonic()  # 模块导入时间,用于 STARTUP_DELAY
+
     def _get_keys(self) -> list:
         """返回 tavly 的 key 列表(支持逗号分隔多 key)。"""
         val = config.get_api_keys().get("tavly", "")
@@ -135,30 +157,144 @@ class TavlyProvider(Provider):
         # 支持逗号或换行分隔多个 key
         return [k.strip() for k in val.replace("\n", ",").split(",") if k.strip()]
 
+    def _in_penalty(self) -> bool:
+        return time.monotonic() < self._penalty_until
+
+    def _enter_penalty(self):
+        self._penalty_until = time.monotonic() + self.PENALTY_SECONDS
+
     def fetch(self) -> dict:
         keys = self._get_keys()
         if not keys:
             return self.unconfigured()
-        # 抑制 IP 直连时的 SSL 证书警告(证书是签给域名的)
+
+        now = time.monotonic()
+
+        # 启动延迟:模块刚加载时(进程刚起),故意等待 STARTUP_DELAY 秒
+        # 防止开发时反复重启 Flask 触发密集 fetch
+        startup_elapsed = now - self._started_at
+        if startup_elapsed < self.STARTUP_DELAY:
+            time.sleep(self.STARTUP_DELAY - startup_elapsed)
+            now = time.monotonic()
+
+        with self._lock:
+            in_penalty = self._in_penalty()
+            cache_snapshot = dict(self._cache)  # 拷贝出来,锁外用
+
+        # 惩罚期:不打 API,直接基于上次缓存构建 fallback 响应
+        if in_penalty:
+            return self._build_fallback(keys, cache_snapshot, in_penalty=True)
+
+        # 抑制 IP 直连时的 SSL 证书警告
         import urllib3
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
         accounts = []
         errors = []
         last_kind = "unknown"
+        any_fetched = False
+
         for i, key in enumerate(keys, 1):
             label = f"账号{i}" if len(keys) > 1 else ""
+
+            # per-key 缓存:距上次成功 < MIN_INTERVAL → 复用
+            with self._lock:
+                cached = self._cache.get(key)
+                need_fetch = (
+                    cached is None
+                    or (time.monotonic() - cached["ts"]) >= self.MIN_INTERVAL
+                )
+
+            if not need_fetch and cached:
+                # 复用缓存,跳过 HTTP 请求
+                data = dict(cached["data"])
+                data["label"] = label
+                accounts.append(data)
+                continue
+
+            # 多 key 串行,key 间 sleep
+            if i > 1 and any_fetched:
+                time.sleep(self.KEY_INTERVAL)
+
             try:
                 data = parse_usage(_fetch_one(key))
                 data["label"] = label
                 accounts.append(data)
+                # 写入 per-key 缓存
+                with self._lock:
+                    self._cache[key] = {"data": data, "ts": time.monotonic()}
+                    self._last_fetch_ts = time.monotonic()
+                any_fetched = True
+            except requests.exceptions.HTTPError as e:
+                code = e.response.status_code if e.response is not None else 0
+                last_kind = classify_request_exc(e)
+                if code == 429:
+                    # 触发限流:进入惩罚期,后续 key 直接走 fallback
+                    with self._lock:
+                        self._enter_penalty()
+                    errors.append(f"{label or '账号'}: 请求过频,已暂停 {self.PENALTY_SECONDS//60} 分钟")
+                    # 用已缓存的 fallback 兜底填剩余 key
+                    for j, k2 in enumerate(keys[i:], start=i):
+                        label2 = f"账号{j+1}" if len(keys) > 1 else ""
+                        with self._lock:
+                            c = self._cache.get(k2)
+                        if c:
+                            d = dict(c["data"])
+                            d["label"] = label2
+                            accounts.append(d)
+                    break
+                errors.append(f"{label or '账号'}: {_human_for_kind(last_kind)}")
+                # 用缓存兜底这一格(让 UI 不至于全空白)
+                with self._lock:
+                    c = self._cache.get(key)
+                if c:
+                    d = dict(c["data"])
+                    d["label"] = label
+                    accounts.append(d)
             except Exception as e:
-                # 归类成人话(卡片内展示)
                 last_kind = classify_request_exc(e)
                 errors.append(f"{label or '账号'}: {_human_for_kind(last_kind)}")
+                # 用缓存兜底
+                with self._lock:
+                    c = self._cache.get(key)
+                if c:
+                    d = dict(c["data"])
+                    d["label"] = label
+                    accounts.append(d)
+
         if not accounts:
-            # 全部失败:用最后一个错误的 kind 定主状态
+            # 所有 key 都没数据(也没缓存):返回错误
             return self.error("; ".join(errors) or "查询失败", kind=last_kind)
+
         data = {"accounts": accounts}
         if errors:
             data["errors"] = errors
+        # 在惩罚期:status 仍标 ok(数据是真实的),但加个 warning 让前端知道
+        with self._lock:
+            if self._in_penalty():
+                data["warning"] = "rate_limited"
+        return self._wrap(STATUS_OK, data)
+
+    def _build_fallback(self, keys: list, cache_snapshot: dict, in_penalty: bool) -> dict:
+        """惩罚期:不打 API,从缓存拼一份 fallback 响应(每个 key 一格)。"""
+        accounts = []
+        missing = []
+        for i, key in enumerate(keys, 1):
+            label = f"账号{i}" if len(keys) > 1 else ""
+            c = cache_snapshot.get(key)
+            if c:
+                d = dict(c["data"])
+                d["label"] = label
+                accounts.append(d)
+            else:
+                missing.append(label or f"账号{i}")
+
+        data: dict = {"accounts": accounts}
+        if in_penalty:
+            with self._lock:
+                remain = max(0, int(self._penalty_until - time.monotonic()))
+            data["warning"] = "rate_limited"
+            data["warning_msg"] = f"Tavly 限流冷却中,剩余 {remain // 60} 分 {remain % 60} 秒"
+        if missing:
+            data["errors"] = [f"{m}: 无缓存数据" for m in missing]
         return self._wrap(STATUS_OK, data)

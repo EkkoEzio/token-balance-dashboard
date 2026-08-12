@@ -62,31 +62,35 @@ def _call(api_path: str, sec_token: str, cookie: str) -> dict | None:
 
 def parse_qianwen(usage: dict, subscription: dict, quota_config: dict) -> dict:
     """把三个接口的数据组合成展示数据。
-    usage 给周百分比;subscription 给档位/到期;quota-config 给上限反推绝对值。"""
+    5小时窗口:平台当前限时取消(usage 不返回 5h 用量),按无限量展示一行;
+    7天窗口:usage 给周已用百分比,quota-config 给上限反推绝对值。
+    subscription 全空 = 登录态失效,不产窗口(走 error 态)。"""
     spec = subscription.get("specCode", "") if subscription else ""
     remaining_days = subscription.get("remainingDays") if subscription else None
     end_time = _ms_to_iso(subscription.get("endTime")) if subscription else ""
     status = subscription.get("status", "") if subscription else ""
 
-    # 周窗口(usage 只给周)
     windows = []
-    if usage:
-        used_pct = usage.get("per1WeekPercentage", 0)
-        reset_ms = usage.get("per1WeekResetTime", 0)
-        # 从 quota-config 取该档位的周上限,反推绝对值
-        total = 0
-        if spec and quota_config and spec in quota_config:
-            total = int(quota_config[spec].get("weekly", 0))
-        used = round(total * used_pct) if total else 0
-        remaining = total - used if total else 0
+    if subscription:  # 有套餐才展示窗口(全空 = 登录态失效)
+        # 5小时窗口:当前限时取消 → 无限量
         windows.append({
-            "label": "7天",
-            "total": total,
-            "used": used,
-            "remaining": remaining,
-            "percentage": round(used_pct * 100, 1),
-            "reset_at": _ms_to_iso(reset_ms),
+            "label": "5小时", "unit": "积分",
+            "total": None, "used": None, "remaining": None,
+            "percentage": 0, "reset_at": "",
+            "unlimited": True, "note": "限时取消",
         })
+        if usage:
+            used_pct = usage.get("per1WeekPercentage", 0)
+            reset_ms = usage.get("per1WeekResetTime", 0)
+            total = int(quota_config.get(spec, {}).get("weekly", 0)) if (spec and quota_config) else 0
+            used = round(total * used_pct) if total else 0
+            remaining = total - used if total else 0
+            windows.append({
+                "label": "7天", "unit": "积分",
+                "total": total, "used": used, "remaining": remaining,
+                "percentage": round(used_pct * 100, 1),
+                "reset_at": _ms_to_iso(reset_ms),
+            })
 
     return {
         "level": spec,
@@ -94,8 +98,6 @@ def parse_qianwen(usage: dict, subscription: dict, quota_config: dict) -> dict:
         "expires_at": end_time,
         "status": status,
         "windows": windows,
-        "note": "5小时窗口当前限时取消" if not any(
-            w["label"] == "5小时" for w in windows) else "",
     }
 
 

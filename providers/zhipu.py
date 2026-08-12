@@ -39,6 +39,7 @@ def parse_quota(raw: dict) -> dict:
         unit = lim.get("unit")
         windows.append({
             "label": _UNIT_LABEL.get(unit, f"窗口{unit}"),
+            "unit": "积分",
             "total": lim.get("usage", 0),
             "used": lim.get("currentValue", 0),
             "remaining": lim.get("remaining", 0),
