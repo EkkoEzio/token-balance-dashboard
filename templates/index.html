@@ -163,7 +163,7 @@
       </template>
 
       <!-- 窗口型:智谱 / 千问(同一套排版) -->
-      <template x-if="(p.key==='zhipu'||p.key==='qianwen') && p.status==='ok'">
+      <template x-if="(p.key==='zhipu'||p.key==='qianwen'||p.key==='minimax') && p.status==='ok'">
         <div>
           <template x-for="(w,i) in (p.data.windows||[])" :key="i">
             <div class="window">
@@ -357,7 +357,7 @@ function board(){
       {key:'zhipu',name:'智谱 Coding Plan',needsKey:true,placeholder:'xxx.yyy'},
       {key:'tavly',name:'Tavly',needsKey:true,placeholder:'tvly-...'},
       {key:'qianwen',name:'千问 Token Plan',needsKey:'qianwen'},
-      {key:'minimax',name:'MiniMax Token Plan',needsKey:false},
+      {key:'minimax',name:'MiniMax Token Plan',needsKey:true,placeholder:'sk-cp-...(Subscription Key)'},
     ],
     async init(){
       await this.loadConfig();
