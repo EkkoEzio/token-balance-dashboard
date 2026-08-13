@@ -173,13 +173,13 @@
             <div class="window">
               <div class="window-label">
                 <span x-text="w.label + '窗口'"></span>
-                <span x-text="w.unlimited ? '无限' : ('已用 ' + w.used + ' · 总额 ' + w.total + ' ' + (w.unit||'积分'))"></span>
+                <span x-text="w.unlimited ? '无限' : (w.used + ' / ' + w.total + ' ' + (w.unit||'积分'))"></span>
               </div>
               <div class="bar">
                 <div class="bar-fill" :class="w.unlimited ? 'ok' : barClass(w)" :style="'width:' + (w.unlimited ? 100 : dispPct(w)) + '%'"></div>
               </div>
               <div class="reset">
-                <span x-text="w.unlimited ? ('无限额度' + (w.note ? ' · ' + w.note : '')) : ('剩余 ' + w.remaining + ' ' + (w.unit||'积分'))"></span>
+                <span x-text="w.unlimited ? ('无限额度' + (w.note ? ' · ' + w.note : '')) : ((w.unit==='%') ? (w.used + '% · 剩余 ' + w.remaining + '%') : (dispPct(w) + '% · 剩余 ' + (100-dispPct(w)) + '%'))"></span>
                 <span class="reset-right" x-show="w.reset_at" x-text="countdown(w.reset_at) + '后重置'"></span>
               </div>
             </div>
@@ -431,10 +431,21 @@ function board(){
       catch(e){}
     },
     async forceRefresh(){
-      // 手动刷新:触发后端立即拉取,并刷新告警
+      // 手动刷新:触发后端立即拉取,并刷新告警。所有卡片同步进入刷新态。
       this.loading=true;
-      try{const r=await fetch('/api/refresh',{method:'POST'});const d=await r.json();this.providers=d.providers;this.lastRefresh=d.last_refresh||0;await this.loadAlerts();}
-      finally{this.loading=false;}
+      this.providers.forEach(p=>{this.refreshing[p.key]=true});
+      try{
+        const r=await fetch('/api/refresh',{method:'POST'});
+        const d=await r.json();
+        this.providers=d.providers;this.lastRefresh=d.last_refresh||0;
+        await this.loadAlerts();
+        // 完成:成功的卡片短暂显示 ✓,失败的直接恢复(避免出错还显绿)
+        this.providers.forEach(p=>{this.refreshing[p.key]=(p.status==='ok'?'ok':false)});
+        setTimeout(()=>{this.providers.forEach(p=>{this.refreshing[p.key]=false})},1200);
+      }catch(e){
+        // 请求失败:所有卡片恢复可点(避免卡在 ⟳)
+        this.providers.forEach(p=>{this.refreshing[p.key]=false});
+      }finally{this.loading=false;}
     },
     refresh(){return this.forceRefresh();},  // 兼容旧调用
     async refreshOne(key){
