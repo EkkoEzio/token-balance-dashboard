@@ -198,6 +198,63 @@ def test_alert_ignores_error_status(monkeypatch):
     assert scheduler.evaluate_alerts(results) == []
 
 
+# ---------- 告警去重(_check_and_notify) ----------
+def _stub_notifier():
+    """把 _send_notification 替换成计数收集器,返回 (sent, restore)。
+    sent 是已发出通知列表;调用 restore() 还原原函数。"""
+    original = scheduler._send_notification
+    sent = []
+    scheduler._send_notification = lambda t, m, l: sent.append((t, m, l))
+    return sent, (lambda: setattr(scheduler, "_send_notification", original))
+
+
+def test_notify_dedup_survives_fetch_failure(monkeypatch):
+    """fetch 偶发失败(error)不应清掉已通知的告警指纹 —— 否则「失败→恢复」
+    抖动会让同一告警被反复弹出(用户实测 DeepSeek 短时间弹一堆 ¥0.00)。"""
+    monkeypatch.setattr(scheduler.config, "get_alerts_config",
+                        lambda: {"enabled": True, "threshold_pct": 20, "threshold_balance": 10})
+    sent, restore = _stub_notifier()
+    try:
+        scheduler._last_notified = set()
+        # 1) DeepSeek ok 余额 0 → 触发,通知 1 次
+        scheduler._check_and_notify(
+            [_ok("deepseek", {"is_available": True, "total_balance": "0.00"})])
+        assert len(sent) == 1
+        # 2) fetch 失败 status=error → 不新增通知
+        scheduler._check_and_notify(
+            [{"key": "deepseek", "name": "DeepSeek", "status": "error",
+              "data": {}, "updated_at": "t"}])
+        assert len(sent) == 1
+        # 3) 恢复 ok 余额仍 0 → 不应重复通知(指纹在失败期间被保留)
+        scheduler._check_and_notify(
+            [_ok("deepseek", {"is_available": True, "total_balance": "0.00"})])
+        assert len(sent) == 1
+    finally:
+        restore()
+
+
+def test_notify_retriggers_after_real_recovery(monkeypatch):
+    """告警在数据可用(status ok)时真正消失 → 清除指纹,下次重新降到阈值会再通知。"""
+    monkeypatch.setattr(scheduler.config, "get_alerts_config",
+                        lambda: {"enabled": True, "threshold_pct": 20, "threshold_balance": 10})
+    sent, restore = _stub_notifier()
+    try:
+        scheduler._last_notified = set()
+        scheduler._check_and_notify(
+            [_ok("deepseek", {"is_available": True, "total_balance": "0.00"})])
+        assert len(sent) == 1
+        # 充值后余额充足,status 仍 ok → 告警真正消失
+        scheduler._check_and_notify(
+            [_ok("deepseek", {"is_available": True, "total_balance": "100.00"})])
+        assert len(sent) == 1
+        # 再次降到 0 → 视为新触发,重新通知
+        scheduler._check_and_notify(
+            [_ok("deepseek", {"is_available": True, "total_balance": "0.00"})])
+        assert len(sent) == 2
+    finally:
+        restore()
+
+
 def test_persist_writes_cache_file(monkeypatch, tmp_path):
     """_persist 把 _results + _last_refresh_ts 写入 cache.json。"""
     import scheduler

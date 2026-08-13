@@ -228,7 +228,12 @@ def _alert_tavly(name, accounts, thr_pct, critical_pct):
 
 
 def _check_and_notify(results: list):
-    """判定告警,对新增告警发 macOS 桌面通知(去重:同一指纹只弹一次)。"""
+    """判定告警,对新增告警发 macOS 桌面通知(去重:同一指纹只在「新增」时弹)。
+
+    去重状态是粘性的:某告警指纹一旦计入 _last_notified,只有当对应 provider
+    数据可用(status==ok)且告警确实消失时才清除 —— 这样 fetch 偶发失败
+    (status!=ok)不会把已通知的指纹冲掉,避免「失败→恢复」抖动让同一告警
+    被反复弹出(曾出现 DeepSeek 短时间弹一堆「余额仅剩 ¥0.00」)。"""
     global _last_notified
     try:
         alerts = evaluate_alerts(results)
@@ -236,14 +241,17 @@ def _check_and_notify(results: list):
         return
     cur_fps = {f"{a['key']}:{a['window']}" for a in alerts}
     new_fps = cur_fps - _last_notified
-    _last_notified = cur_fps
-    if not new_fps:
-        return
     # 只通知新触发的
     for a in alerts:
         fp = f"{a['key']}:{a['window']}"
         if fp in new_fps:
             _send_notification(a["name"], a["msg"], a["level"])
+    # 更新去重状态:当前仍触发的保留;已消失的,仅当对应 provider 数据可用(ok)
+    # 才确认「真正恢复」并清除 —— 数据不可用(error/expired)时保留指纹防抖动
+    ok_keys = {r.get("key") for r in results if r.get("status") == "ok"}
+    unconfirmed = {fp for fp in (_last_notified - cur_fps)
+                   if fp.split(":", 1)[0] not in ok_keys}
+    _last_notified = cur_fps | unconfirmed
 
 
 def _send_notification(title: str, msg: str, level: str):
