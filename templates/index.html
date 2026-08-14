@@ -152,8 +152,8 @@
         </div>
       </div>
 
-      <!-- 余额型:DeepSeek -->
-      <template x-if="p.key==='deepseek' && p.status==='ok'">
+      <!-- 余额型:DeepSeek / SiliconFlow -->
+      <template x-if="(p.key==='deepseek'||p.key==='siliconflow') && p.status==='ok'">
         <div>
           <div class="balance" x-text="'¥ ' + p.data.total_balance"></div>
           <div class="balance-sub">
@@ -166,8 +166,8 @@
         </div>
       </template>
 
-      <!-- 窗口型:智谱 / 千问(同一套排版) -->
-      <template x-if="(p.key==='zhipu'||p.key==='qianwen'||p.key==='minimax') && p.status==='ok'">
+      <!-- 窗口型:智谱 / 千问 / Kimi(同一套排版) -->
+      <template x-if="(p.key==='zhipu'||p.key==='qianwen'||p.key==='minimax'||p.key==='kimi') && p.status==='ok'">
         <div>
           <template x-for="(w,i) in (p.data.windows||[])" :key="i">
             <div class="window">
@@ -390,6 +390,8 @@ function board(){
       {key:'tavly',name:'Tavly',needsKey:true,placeholder:'tvly-...'},
       {key:'qianwen',name:'千问 Token Plan',needsKey:'qianwen'},
       {key:'minimax',name:'MiniMax Token Plan',needsKey:true,placeholder:'sk-cp-...(Subscription Key)'},
+      {key:'siliconflow',name:'SiliconFlow',needsKey:true,placeholder:'sk-...(API Key)'},
+      {key:'kimi',name:'Kimi For Coding',needsKey:true,placeholder:'sk-...(Kimi For Coding Key)'},
     ],
     // 设置页列表:只显示未关闭的 provider(关闭的卡片不展示)
     get activeProviders(){

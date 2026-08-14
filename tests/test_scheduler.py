@@ -16,7 +16,7 @@ def test_get_all_returns_active_providers(monkeypatch, tmp_path):
     scheduler.refresh_now()
     results = scheduler.get_all()
     keys = {r["key"] for r in results}
-    assert keys == {"deepseek", "zhipu", "tavly", "qianwen", "minimax"}
+    assert keys == {cls.key for cls in scheduler._ALL_CLASSES}
 
 
 def test_disabled_provider_skipped(monkeypatch, tmp_path):
@@ -29,11 +29,11 @@ def test_disabled_provider_skipped(monkeypatch, tmp_path):
         monkeypatch.setattr(cls, "fetch",
                             lambda self: {"key": self.key, "name": self.name,
                                           "status": "ok", "data": {}, "updated_at": "t"})
-    monkeypatch.setattr(scheduler.config, "get_disabled", lambda: {"minimax", "qianwen"})
+    monkeypatch.setattr(scheduler.config, "get_disabled", lambda: {"minimax", "qianwen", "kimi"})
     scheduler._init_providers()
     results = scheduler.refresh_now()
     keys = {r["key"] for r in results}
-    assert keys == {"deepseek", "zhipu", "tavly"}
+    assert keys == {cls.key for cls in scheduler._ALL_CLASSES} - {"minimax", "qianwen", "kimi"}
 
 
 def test_refresh_now_records_timestamp(monkeypatch, tmp_path):
@@ -381,7 +381,7 @@ def test_refresh_now_persists_to_disk(monkeypatch, tmp_path):
     assert cache_file.exists()
     data = json.loads(cache_file.read_text(encoding="utf-8"))
     assert data["last_refresh"] > 0
-    assert len(data["results"]) == 5
+    assert len(data["results"]) == len(scheduler._ALL_CLASSES)
 
 
 def test_refresh_one_persists_to_disk(monkeypatch, tmp_path):
@@ -461,6 +461,6 @@ def test_startup_refresh_runs_in_background(monkeypatch, tmp_path):
                             lambda self: {"key": self.key, "name": self.name,
                                           "status": "ok", "data": {}, "updated_at": "t"})
     scheduler._startup_refresh()
-    assert len(scheduler._results) == 5
+    assert len(scheduler._results) == len(scheduler._ALL_CLASSES)
     assert scheduler._last_refresh_ts > 0
     assert (tmp_path / "cache.json").exists()

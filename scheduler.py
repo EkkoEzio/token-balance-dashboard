@@ -16,11 +16,14 @@ from providers.zhipu import ZhipuProvider
 from providers.qianwen import QianwenProvider
 from providers.minimax import MiniMaxProvider
 from providers.tavly import TavlyProvider
+from providers.siliconflow import SiliconFlowProvider
+from providers.kimi import KimiProvider
 import config
 
 # 所有可用的 provider 类(顺序即展示顺序)
 _ALL_CLASSES = [DeepSeekProvider, ZhipuProvider, TavlyProvider,
-                QianwenProvider, MiniMaxProvider]
+                QianwenProvider, MiniMaxProvider, SiliconFlowProvider,
+                KimiProvider]
 
 # 统一定时刷新间隔(秒)。10 分钟,避免过频触发各平台风控/限流。
 REFRESH_INTERVAL = 600
@@ -165,10 +168,10 @@ def evaluate_alerts(results: list) -> list:
         name = r.get("name", key)
         data = r.get("data") or {}
 
-        if key == "deepseek":
-            alerts.extend(_alert_deepseek(name, data, thr_balance))
-        elif key == "zhipu":
-            alerts.extend(_alert_window(name, data.get("windows", []), thr_pct, critical_pct))
+        if key in ("deepseek", "siliconflow"):
+            alerts.extend(_alert_deepseek(key, name, data, thr_balance))
+        elif key in ("zhipu", "kimi"):
+            alerts.extend(_alert_window(key, name, data.get("windows", []), thr_pct, critical_pct))
         elif key == "tavly":
             alerts.extend(_alert_tavly(name, data.get("accounts", []), thr_pct, critical_pct))
     return alerts
@@ -178,23 +181,23 @@ def _level_from_pct(remain_pct: int, thr_pct: int, critical_pct: int) -> str:
     return "critical" if remain_pct <= critical_pct else "warning"
 
 
-def _alert_deepseek(name, data, thr_balance):
+def _alert_deepseek(key, name, data, thr_balance):
     out = []
     try:
         bal = float(data.get("total_balance", "0"))
     except (TypeError, ValueError):
         bal = 0.0
     if data.get("is_available") is False:
-        out.append({"key": "deepseek", "name": name, "level": "critical",
+        out.append({"key": key, "name": name, "level": "critical",
                     "window": "余额", "msg": f"余额不足(¥{bal:.2f})"})
     elif bal < thr_balance:
         lvl = "critical" if bal < thr_balance / 2 else "warning"
-        out.append({"key": "deepseek", "name": name, "level": lvl,
+        out.append({"key": key, "name": name, "level": lvl,
                     "window": "余额", "msg": f"余额仅剩 ¥{bal:.2f}"})
     return out
 
 
-def _alert_window(name, windows, thr_pct, critical_pct):
+def _alert_window(key, name, windows, thr_pct, critical_pct):
     out = []
     for w in windows:
         total = w.get("total", 0)
@@ -203,7 +206,7 @@ def _alert_window(name, windows, thr_pct, critical_pct):
         remain_pct = round(w.get("remaining", 0) / total * 100)
         if remain_pct < thr_pct:
             lvl = _level_from_pct(remain_pct, thr_pct, critical_pct)
-            out.append({"key": "zhipu", "name": name, "level": lvl,
+            out.append({"key": key, "name": name, "level": lvl,
                         "window": w.get("label", "窗口"),
                         "msg": f"{w.get('label','')}窗口仅剩 {remain_pct}%({w.get('remaining',0)}/{total})"})
     return out

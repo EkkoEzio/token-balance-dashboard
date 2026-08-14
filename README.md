@@ -1,6 +1,6 @@
 # Token 余额看板
 
-本地自用的 AI 服务额度聚合看板：把 DeepSeek、智谱、Tavly、千问、MiniMax 五家的余额/用量收进一个页面，定时自动刷新，额度不足时红条 + macOS 桌面通知告警。
+本地自用的 AI 服务额度聚合看板：把 DeepSeek、智谱、Tavly、千问、MiniMax、SiliconFlow、Kimi 七家的余额/用量收进一个页面，定时自动刷新，额度不足时红条 + macOS 桌面通知告警。
 
 纯本地运行（Flask + Alpine.js，无构建步骤），所有 Key 存在自己机器的 `data/config.json`，不经过任何第三方服务器。
 
@@ -10,7 +10,7 @@
 
 ## 功能
 
-- **5 家服务聚合**：余额型（DeepSeek）、窗口型（智谱/千问/MiniMax 积分或百分比）、多账号次数型（Tavly 支持双账号）
+- **7 家服务聚合**：余额型（DeepSeek、SiliconFlow）、窗口型（智谱/千问/MiniMax/Kimi 积分或百分比或次数）、多账号次数型（Tavly 支持双账号）
 - **自动刷新**：后台每 10 分钟并发拉取；卡片可单独刷新；带防风控冷却
 - **额度告警**：余额/百分比阈值触发顶部红条 + macOS 桌面通知（带去重防抖）
 - **失败保护**：偶发拉取失败时保留上次成功数据，不闪断
@@ -45,6 +45,8 @@ python app.py          # 打开 http://localhost:5070
 | 智谱 Coding Plan | API Key（`xxx.yyy` 格式，不加 Bearer） | [开放平台](https://open.bigmodel.cn) → API Keys |
 | Tavly | API Key（`tvly-…`），支持两个账号（逗号分隔） | [控制台](https://app.tavily.com) → API Keys |
 | MiniMax Token Plan | Subscription Key（**必须 `sk-cp-` 开头**，普通 API Key 会 401） | [平台](https://platform.minimaxi.com) → API Keys |
+| SiliconFlow | API Key（`sk-…`） | [开放平台](https://cloud.siliconflow.cn) → API 密钥 |
+| Kimi For Coding | Kimi API Key（`sk-…`） | [开放平台](https://platform.kimi.com) → API Key（For Coding 套餐的 key） |
 | 千问 Token Plan | `sec_token` + `cookie`（F12 抓取，见下） | 见下方步骤 |
 
 ### 千问 Token Plan 抓取步骤

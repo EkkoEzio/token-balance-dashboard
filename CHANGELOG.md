@@ -8,7 +8,9 @@
 ## [Unreleased]
 
 ### Added
-- 开源准备：README（5 家 key 配置指引 + 千问 F12 抓取步骤 + 截图）、MIT LICENSE、GitHub Actions CI（pytest，Python 3.10/3.12 矩阵）。
+- 新增 **SiliconFlow** provider：`GET /v1/user/info`（Bearer，官方文档端点），余额型卡片，充值/赠送/总余额，参与余额阈值告警。
+- 新增 **Kimi For Coding** provider：`GET /coding/v1/usages`（Bearer），窗口型卡片（5 小时 + 7 天次数窗口），参与百分比阈值告警。
+- 开源准备：README（key 配置指引 + 千问 F12 抓取步骤 + 截图）、MIT LICENSE、GitHub Actions CI（pytest，Python 3.10/3.12 矩阵）。
 
 ### Removed
 - 删除未被引用的 `cookie_jar.py` 及其测试（早期尝试读 Edge cookie 的遗留），依赖中移除 `yt-dlp`（本应用从未实际使用），安装更快。
