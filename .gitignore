@@ -4,3 +4,4 @@ __pycache__/
 data/config.json
 data/*.json
 .DS_Store
+.zcode/

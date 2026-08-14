@@ -105,7 +105,7 @@ def test_set_theme_validates(tmp_path, monkeypatch):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/hushen/Desktop/token余额看板 && python -m pytest tests/test_config.py -v`
+Run: `cd <项目目录> && python -m pytest tests/test_config.py -v`
 Expected: FAIL — `config` 模块属性/函数未定义或 ModuleNotFoundError。
 
 - [ ] **Step 3: Write minimal implementation**
@@ -206,13 +206,13 @@ data/*.json
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd /Users/hushen/Desktop/token余额看板 && python -m pytest tests/test_config.py -v`
+Run: `cd <项目目录> && python -m pytest tests/test_config.py -v`
 Expected: PASS (3 passed)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/hushen/Desktop/token余额看板
+cd <项目目录>
 git init
 git add config.py requirements.txt .gitignore tests/__init__.py tests/test_config.py
 git commit -m "feat: 项目骨架 + config.py(API Key/主题热更新)"
@@ -1132,7 +1132,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 2: 手动冒烟测试**
 
-Run: `cd /Users/hushen/Desktop/token余额看板 && source .venv/bin/activate && python app.py`
+Run: `cd <项目目录> && source .venv/bin/activate && python app.py`
 另开终端:
 ```bash
 curl -s localhost:5060/api/usage | python -m json.tool
@@ -1402,11 +1402,11 @@ read -n 1 -s -r -p "按任意键关闭窗口..."
 
 - [ ] **Step 2: 设可执行权限**
 
-Run: `chmod +x /Users/hushen/Desktop/token余额看板/启动.command`
+Run: `chmod +x <项目目录>/启动.command`
 
 - [ ] **Step 3: 全量测试**
 
-Run: `cd /Users/hushen/Desktop/token余额看板 && source .venv/bin/activate && python -m pytest -v`
+Run: `cd <项目目录> && source .venv/bin/activate && python -m pytest -v`
 Expected: 全部测试通过。
 
 - [ ] **Step 4: 手动端到端验证**
