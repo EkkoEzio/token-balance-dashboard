@@ -78,7 +78,7 @@ python app.py          # 打开 http://localhost:5070
 
 ```bash
 source .venv/bin/activate
-python -m pytest -v      # 75 项用例
+python -m pytest -v      # 85 项用例
 ```
 
 ## 免责声明
