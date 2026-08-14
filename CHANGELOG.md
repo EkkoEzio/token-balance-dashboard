@@ -5,6 +5,16 @@
 
 ---
 
+## [Unreleased]
+
+### Added
+- 开源准备：README（5 家 key 配置指引 + 千问 F12 抓取步骤 + 截图）、MIT LICENSE、GitHub Actions CI（pytest，Python 3.10/3.12 矩阵）。
+
+### Removed
+- 删除未被引用的 `cookie_jar.py` 及其测试（早期尝试读 Edge cookie 的遗留），依赖中移除 `yt-dlp`（本应用从未实际使用），安装更快。
+
+---
+
 ## [v1.0] — 2026-08-13
 
 聚合 5 家 AI 服务的额度/余额,在一个本地看板统一展示,定时自动刷新,额度告警红条 + macOS 桌面通知。

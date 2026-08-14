@@ -4,7 +4,10 @@
 
 纯本地运行（Flask + Alpine.js，无构建步骤），所有 Key 存在自己机器的 `data/config.json`，不经过任何第三方服务器。
 
-![技术栈](https://img.shields.io/badge/Python-3.10+-blue) ![框架](https://img.shields.io/badge/Flask-3.x-lightgrey) ![前端](https://img.shields.io/badge/Alpine.js-3-green) ![协议](https://img.shields.io/badge/License-MIT-orange)
+![看板截图](docs/screenshot.png)
+
+<!-- 推送到 GitHub 后:把下面 CI 徽章里的 YOUR-USERNAME/token-balance-dashboard 替换成实际仓库路径 -->
+![CI](https://github.com/YOUR-USERNAME/token-balance-dashboard/actions/workflows/ci.yml/badge.svg) ![技术栈](https://img.shields.io/badge/Python-3.10+-blue) ![框架](https://img.shields.io/badge/Flask-3.x-lightgrey) ![前端](https://img.shields.io/badge/Alpine.js-3-green) ![协议](https://img.shields.io/badge/License-MIT-orange)
 
 ## 功能
 
