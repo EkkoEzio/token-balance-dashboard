@@ -12,6 +12,9 @@
 - 新增 **Kimi For Coding** provider：`GET /coding/v1/usages`（Bearer），窗口型卡片（5 小时 + 7 天次数窗口），参与百分比阈值告警。
 - 开源准备：README（key 配置指引 + 千问 F12 抓取步骤 + 截图）、MIT LICENSE、GitHub Actions CI（pytest，Python 3.10/3.12 矩阵）。
 
+### Fixed
+- **设置页「关闭即失联」死锁**（v1.0 遗留 bug）：设置页 provider 列表此前会过滤掉已关闭的供应商，导致关闭后找不到开关、无法重新开启。现改为设置页始终全量展示（关闭的行半透明弱化），仅主页面卡片随开关显隐。
+
 ### Removed
 - 删除未被引用的 `cookie_jar.py` 及其测试（早期尝试读 Edge cookie 的遗留），依赖中移除 `yt-dlp`（本应用从未实际使用），安装更快。
 

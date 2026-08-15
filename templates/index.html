@@ -85,6 +85,8 @@
   .prov-field{border-bottom:1px solid var(--border);padding-bottom:14px}
   .prov-field[draggable="true"]{cursor:grab}
   .prov-field.drag-active{opacity:.5;border:1px dashed var(--accent);border-radius:8px}
+  .prov-field.prov-disabled .prov-head label:first-child{opacity:.5}
+  .prov-field.prov-disabled .key-input,.prov-field.prov-disabled .key-actions{opacity:.5}
   .drag-handle{color:var(--muted);cursor:grab;font-size:14px;letter-spacing:-2px;user-select:none}
   .prov-head{display:flex;justify-content:space-between;align-items:center}
   .key-input{width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);padding:8px 10px;border-radius:6px;font-size:13px}
@@ -258,14 +260,14 @@
   </div>
 
   <!-- 排序说明 -->
-  <p class="hint" style="margin:0 0 8px">拖动 ⋮⋮ 调整卡片顺序(关闭的供应商不显示)</p>
-  <template x-for="prov in activeProviders" :key="prov.key">
+  <p class="hint" style="margin:0 0 8px">拖动 ⋮⋮ 调整卡片顺序;关闭的供应商仅隐藏卡片,随时可在此重新开启</p>
+  <template x-for="prov in settingsProviders" :key="prov.key">
     <div class="field prov-field" draggable="true"
          @dragstart="dragStart($event, prov.key)"
          @dragover.prevent="dragOver($event, prov.key)"
          @drop.prevent="dragDrop($event, prov.key)"
          @dragend="dragEnd()"
-         :class="dragKey===prov.key?'drag-active':''">
+         :class="dragKey===prov.key?'drag-active':(disabled.includes(prov.key)?'prov-disabled':'')">
       <div class="prov-head">
         <div style="display:flex;align-items:center;gap:6px">
           <span class="drag-handle" title="拖拽排序">⋮⋮</span>
@@ -393,10 +395,6 @@ function board(){
       {key:'siliconflow',name:'SiliconFlow',needsKey:true,placeholder:'sk-...(API Key)'},
       {key:'kimi',name:'Kimi For Coding',needsKey:true,placeholder:'sk-...(Kimi For Coding Key)'},
     ],
-    // 设置页列表:只显示未关闭的 provider(关闭的卡片不展示)
-    get activeProviders(){
-      return this.settingsProviders.filter(p=>!this.disabled.includes(p.key));
-    },
     async init(){
       await this.loadConfig();
       await this.poll();                      // 立即读缓存 → 瞬间渲染磁盘数据(不等网络)
