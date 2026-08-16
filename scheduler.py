@@ -35,8 +35,13 @@ _results_lock = threading.Lock()
 _started = False
 _persist_lock = threading.Lock()  # 串行化磁盘写(与 _results_lock 独立)
 
-# 告警通知去重:记录上次已通知的告警指纹集合,只在新增时弹通知
-_last_notified: set = set()
+# 告警通知去重:指纹 -> 已通知的周期(period)。
+# 窗口型(5h/7天/月度):period=窗口 reset_at,同一周期内最多通知一次,
+#   周期内告警抖动/消失再现不重发;窗口重置后(新 reset_at)再耗尽才算新事件。
+# 余额型(period 为空):事件语义 —— 告警在数据可用时真正消失才允许下次重新通知。
+# 状态持久化到 data/notified.json,重启不失忆(否则每次重启重弹存量告警)。
+_notified: dict = {}
+_notified_lock = threading.Lock()
 
 
 def _init_providers():
@@ -97,13 +102,6 @@ def refresh_now(notify: bool = True) -> list:
     _persist()
     if notify:
         _check_and_notify(_results)
-    else:
-        # 启动:把当前告警指纹计入已通知集合,这样后续只在"新增"时弹
-        try:
-            global _last_notified
-            _last_notified = {f"{a['key']}:{a['window']}" for a in evaluate_alerts(_results)}
-        except Exception:
-            pass
     return list(_results)
 
 
@@ -208,6 +206,7 @@ def _alert_window(key, name, windows, thr_pct, critical_pct):
             lvl = _level_from_pct(remain_pct, thr_pct, critical_pct)
             out.append({"key": key, "name": name, "level": lvl,
                         "window": w.get("label", "窗口"),
+                        "period": w.get("reset_at") or "",
                         "msg": f"{w.get('label','')}窗口仅剩 {remain_pct}%({w.get('remaining',0)}/{total})"})
     return out
 
@@ -226,35 +225,46 @@ def _alert_tavly(name, accounts, thr_pct, critical_pct):
             label = acc.get("label") or "账号"
             out.append({"key": "tavly", "name": name, "level": lvl,
                         "window": label,
+                        "period": acc.get("reset_at") or "",
                         "msg": f"{label}仅剩 {remain_pct}%({acc.get('remaining',0)}/{total})"})
     return out
 
 
 def _check_and_notify(results: list):
-    """判定告警,对新增告警发 macOS 桌面通知(去重:同一指纹只在「新增」时弹)。
+    """判定告警并发 macOS 桌面通知(周期感知去重)。
 
-    去重状态是粘性的:某告警指纹一旦计入 _last_notified,只有当对应 provider
-    数据可用(status==ok)且告警确实消失时才清除 —— 这样 fetch 偶发失败
-    (status!=ok)不会把已通知的指纹冲掉,避免「失败→恢复」抖动让同一告警
-    被反复弹出(曾出现 DeepSeek 短时间弹一堆「余额仅剩 ¥0.00」)。"""
-    global _last_notified
+    窗口型告警(带 period=reset_at):同一周期只通知一次,周期内告警抖动/
+    消失再现不重发;窗口重置(新 reset_at)后再耗尽才算新事件、可再通知。
+    余额型告警(无 period):无记录才通知;数据可用且告警真正消失时清除记录,
+    「充值恢复→再次跌破」可重新通知。fetch 偶发失败(status!=ok)不清除
+    记录,防「失败→恢复」抖动重弹。状态持久化,重启不失忆。"""
+    global _notified
     try:
         alerts = evaluate_alerts(results)
     except Exception:
         return
-    cur_fps = {f"{a['key']}:{a['window']}" for a in alerts}
-    new_fps = cur_fps - _last_notified
-    # 只通知新触发的
-    for a in alerts:
-        fp = f"{a['key']}:{a['window']}"
-        if fp in new_fps:
-            _send_notification(a["name"], a["msg"], a["level"])
-    # 更新去重状态:当前仍触发的保留;已消失的,仅当对应 provider 数据可用(ok)
-    # 才确认「真正恢复」并清除 —— 数据不可用(error/expired)时保留指纹防抖动
-    ok_keys = {r.get("key") for r in results if r.get("status") == "ok"}
-    unconfirmed = {fp for fp in (_last_notified - cur_fps)
-                   if fp.split(":", 1)[0] not in ok_keys}
-    _last_notified = cur_fps | unconfirmed
+    changed = False
+    with _notified_lock:
+        cur_fps = set()
+        for a in alerts:
+            fp = f"{a['key']}:{a['window']}"
+            period = a.get("period") or ""
+            cur_fps.add(fp)
+            rec = _notified.get(fp)
+            if not rec or (period and rec.get("period") != period):
+                _send_notification(a["name"], a["msg"], a["level"])
+                _notified[fp] = {"period": period}
+                changed = True
+        # 清除:数据可用且告警真正消失时,仅余额型(无周期)清除;
+        # 窗口型记录保留到周期自然轮换(新 reset_at 覆盖),防周期内抖动重弹
+        ok_keys = {r.get("key") for r in results if r.get("status") == "ok"}
+        for fp in list(_notified):
+            if fp not in cur_fps and fp.split(":", 1)[0] in ok_keys:
+                if not _notified[fp].get("period"):
+                    del _notified[fp]
+                    changed = True
+    if changed:
+        _persist_notified()
 
 
 def _send_notification(title: str, msg: str, level: str):
@@ -270,6 +280,36 @@ def _send_notification(title: str, msg: str, level: str):
              f'display notification "{safe_msg}" with title "Token看板:{safe_title}"'],
             timeout=5, capture_output=True,
         )
+    except Exception:
+        pass
+
+
+def _persist_notified():
+    """把通知去重状态原子写入 data/notified.json。失败静默(下次再试)。"""
+    path = config.DATA_DIR / "notified.json"
+    with _notified_lock:
+        snapshot = dict(_notified)
+    with _persist_lock:
+        tmp = path.with_suffix(".json.tmp")
+        try:
+            tmp.write_text(json.dumps(snapshot, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, path)
+        except Exception:
+            pass
+
+
+def _load_notified_from_disk():
+    """启动时从 data/notified.json 恢复通知去重状态(重启不重弹存量告警)。
+    文件不存在/损坏时静默跳过。"""
+    global _notified
+    path = config.DATA_DIR / "notified.json"
+    if not path.exists():
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            with _notified_lock:
+                _notified = {k: v for k, v in data.items() if isinstance(v, dict)}
     except Exception:
         pass
 
@@ -331,7 +371,7 @@ def _loop():
 def _startup_refresh():
     """启动后台并发刷新(不阻塞 start())。拉完更新缓存+落盘,并抑制历史告警通知。
     逻辑等价于旧 refresh_now(notify=False),但被放进后台线程异步执行。"""
-    global _results, _last_refresh_ts, _last_notified
+    global _results, _last_refresh_ts
     try:
         # 启动刷新失败不影响服务（磁盘缓存仍可用，_loop 兜底）
         _init_providers()
@@ -340,11 +380,6 @@ def _startup_refresh():
             _results = fresh
             _last_refresh_ts = time.time()
         _persist()
-        # 启动:把当前告警指纹计入已通知集合,后续只在"新增"时弹
-        try:
-            _last_notified = {f"{a['key']}:{a['window']}" for a in evaluate_alerts(fresh)}
-        except Exception:
-            pass
     except Exception:
         pass
 
@@ -359,5 +394,6 @@ def start():
     _started = True
     _init_providers()
     _load_cache_from_disk()
+    _load_notified_from_disk()  # 恢复通知去重状态,重启不重弹存量告警
     threading.Thread(target=_loop, daemon=True).start()
     threading.Thread(target=_startup_refresh, daemon=True).start()

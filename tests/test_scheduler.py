@@ -208,14 +208,16 @@ def _stub_notifier():
     return sent, (lambda: setattr(scheduler, "_send_notification", original))
 
 
-def test_notify_dedup_survives_fetch_failure(monkeypatch):
+def test_notify_dedup_survives_fetch_failure(monkeypatch, tmp_path):
+    import config as _cfg
+    monkeypatch.setattr(_cfg, "DATA_DIR", tmp_path)
     """fetch 偶发失败(error)不应清掉已通知的告警指纹 —— 否则「失败→恢复」
     抖动会让同一告警被反复弹出(用户实测 DeepSeek 短时间弹一堆 ¥0.00)。"""
     monkeypatch.setattr(scheduler.config, "get_alerts_config",
                         lambda: {"enabled": True, "threshold_pct": 20, "threshold_balance": 10})
     sent, restore = _stub_notifier()
     try:
-        scheduler._last_notified = set()
+        scheduler._notified = {}
         # 1) DeepSeek ok 余额 0 → 触发,通知 1 次
         scheduler._check_and_notify(
             [_ok("deepseek", {"is_available": True, "total_balance": "0.00"})])
@@ -233,13 +235,15 @@ def test_notify_dedup_survives_fetch_failure(monkeypatch):
         restore()
 
 
-def test_notify_retriggers_after_real_recovery(monkeypatch):
+def test_notify_retriggers_after_real_recovery(monkeypatch, tmp_path):
     """告警在数据可用(status ok)时真正消失 → 清除指纹,下次重新降到阈值会再通知。"""
+    import config as _cfg
+    monkeypatch.setattr(_cfg, "DATA_DIR", tmp_path)
     monkeypatch.setattr(scheduler.config, "get_alerts_config",
                         lambda: {"enabled": True, "threshold_pct": 20, "threshold_balance": 10})
     sent, restore = _stub_notifier()
     try:
-        scheduler._last_notified = set()
+        scheduler._notified = {}
         scheduler._check_and_notify(
             [_ok("deepseek", {"is_available": True, "total_balance": "0.00"})])
         assert len(sent) == 1
@@ -253,6 +257,86 @@ def test_notify_retriggers_after_real_recovery(monkeypatch):
         assert len(sent) == 2
     finally:
         restore()
+
+
+def test_notify_window_once_per_period(monkeypatch, tmp_path):
+    """窗口型:同一周期(reset_at 不变)内只通知一次;周期内告警消失再现
+    (阈值抖动/短暂恢复)不重发。"""
+    import config as _cfg
+    monkeypatch.setattr(_cfg, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(scheduler.config, "get_alerts_config",
+                        lambda: {"enabled": True, "threshold_pct": 20, "threshold_balance": 10})
+    sent, restore = _stub_notifier()
+    try:
+        scheduler._notified = {}
+        low = {"label": "5小时", "unit": "次", "total": 100, "used": 100,
+               "remaining": 0, "percentage": 100, "reset_at": "2026-08-15T10:00:00+00:00"}
+        high = {**low, "used": 70, "remaining": 30, "percentage": 70}
+        # 耗尽 → 通知 1 次
+        scheduler._check_and_notify([_ok("kimi", {"windows": [low]})])
+        assert len(sent) == 1
+        # 数据 ok、告警短暂消失(剩余回到 30%)
+        scheduler._check_and_notify([_ok("kimi", {"windows": [high]})])
+        assert len(sent) == 1
+        # 同周期内再次耗尽 → 不重发
+        scheduler._check_and_notify([_ok("kimi", {"windows": [low]})])
+        assert len(sent) == 1
+        # 去重状态已落盘
+        assert (tmp_path / "notified.json").exists()
+    finally:
+        restore()
+
+
+def test_notify_window_new_period_retriggers(monkeypatch, tmp_path):
+    """窗口重置(reset_at 变化)后再次耗尽 → 新周期,应重新通知。"""
+    import config as _cfg
+    monkeypatch.setattr(_cfg, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(scheduler.config, "get_alerts_config",
+                        lambda: {"enabled": True, "threshold_pct": 20, "threshold_balance": 10})
+    sent, restore = _stub_notifier()
+    try:
+        scheduler._notified = {}
+        p1 = {"label": "7天", "unit": "积分", "total": 1000, "used": 1000,
+              "remaining": 0, "percentage": 100, "reset_at": "2026-08-15T00:00:00+00:00"}
+        p2 = {**p1, "reset_at": "2026-08-22T00:00:00+00:00"}  # 窗口已重置
+        scheduler._check_and_notify([_ok("kimi", {"windows": [p1]})])
+        assert len(sent) == 1
+        scheduler._check_and_notify([_ok("kimi", {"windows": [p2]})])
+        assert len(sent) == 2
+    finally:
+        restore()
+
+
+def test_notified_state_survives_restart(monkeypatch, tmp_path):
+    """模拟重启:通知后落盘,内存清空并从磁盘恢复 → 同一周期不重弹。"""
+    import config as _cfg
+    monkeypatch.setattr(_cfg, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(scheduler.config, "get_alerts_config",
+                        lambda: {"enabled": True, "threshold_pct": 20, "threshold_balance": 10})
+    sent, restore = _stub_notifier()
+    try:
+        scheduler._notified = {}
+        low = {"label": "5小时", "total": 100, "used": 100, "remaining": 0,
+               "reset_at": "2026-08-15T10:00:00+00:00"}
+        scheduler._check_and_notify([_ok("kimi", {"windows": [low]})])
+        assert len(sent) == 1
+        # 重启:内存丢失,从磁盘恢复
+        scheduler._notified = {}
+        scheduler._load_notified_from_disk()
+        scheduler._check_and_notify([_ok("kimi", {"windows": [low]})])
+        assert len(sent) == 1
+    finally:
+        restore()
+
+
+def test_no_alert_for_provider_absent_from_results(monkeypatch):
+    """需求回归:卡片隐藏(禁用)的 provider 不在刷新结果里,不产生任何告警/通知。"""
+    monkeypatch.setattr(scheduler.config, "get_alerts_config",
+                        lambda: {"enabled": True, "threshold_pct": 20, "threshold_balance": 10})
+    # deepseek 已被用户隐藏:结果列表里没有它(即使它余额为 0 也不会出现)
+    results = [_ok("zhipu", {"windows": []})]
+    alerts = scheduler.evaluate_alerts(results)
+    assert all(a["key"] != "deepseek" for a in alerts)
 
 
 def test_persist_writes_cache_file(monkeypatch, tmp_path):
@@ -454,7 +538,7 @@ def test_startup_refresh_runs_in_background(monkeypatch, tmp_path):
     scheduler._providers = {}
     scheduler._results = []
     scheduler._last_refresh_ts = 0.0
-    scheduler._last_notified = set()
+    scheduler._notified = {}
     monkeypatch.setattr(scheduler.config, "get_disabled", lambda: set())
     for cls in scheduler._ALL_CLASSES:
         monkeypatch.setattr(cls, "fetch",
