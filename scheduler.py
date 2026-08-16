@@ -181,6 +181,9 @@ def _level_from_pct(remain_pct: int, thr_pct: int, critical_pct: int) -> str:
 
 def _alert_deepseek(key, name, data, thr_balance):
     out = []
+    if "total_balance" not in data:
+        # 数据缺余额字段:不可信,不告警(防把异常数据当 ¥0 误报)
+        return out
     try:
         bal = float(data.get("total_balance", "0"))
     except (TypeError, ValueError):

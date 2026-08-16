@@ -339,6 +339,14 @@ def test_no_alert_for_provider_absent_from_results(monkeypatch):
     assert all(a["key"] != "deepseek" for a in alerts)
 
 
+def test_alert_balance_skips_missing_field(monkeypatch):
+    """数据缺 total_balance 字段时余额告警跳过(不把异常数据当 ¥0 误报)。"""
+    monkeypatch.setattr(scheduler.config, "get_alerts_config",
+                        lambda: {"enabled": True, "threshold_pct": 20, "threshold_balance": 10})
+    alerts = scheduler.evaluate_alerts([_ok("siliconflow", {})])
+    assert alerts == []
+
+
 def test_persist_writes_cache_file(monkeypatch, tmp_path):
     """_persist 把 _results + _last_refresh_ts 写入 cache.json。"""
     import scheduler
